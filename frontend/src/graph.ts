@@ -3,6 +3,7 @@ import * as THREE from "three/webgpu";
 import { forceSimulation, forceLink, forceManyBody, forceCenter } from "d3-force-3d";
 import { Node, Edge, TopologyResponse, PROTOCOL_COLORS } from "./types";
 import { Renderer } from "./renderer";
+import { createLabel } from "./labels";
 
 interface SimNode extends Node {
   x: number;
@@ -10,7 +11,10 @@ interface SimNode extends Node {
   z: number;
 }
 
-const MAX_EDGES = 256;
+const MAX_EDGES_PER_PROTO = 64;
+
+// Protocols we track separately for colored edges
+const EDGE_PROTOS = ["HTTP", "TLS", "DNS", "SSH", "TCP", "UDP", "ICMP", "NTP", "SMTP", "DHCP", "OTHER"] as const;
 
 export class Graph {
   private renderer: Renderer;
@@ -18,44 +22,54 @@ export class Graph {
   private edgeList: { source: SimNode; target: SimNode; edge: Edge }[] = [];
   private simulation: any;
 
+  // Node meshes + label sprites
   private nodeGroup = new THREE.Group();
+  private labelGroup = new THREE.Group();
   private nodeSpheres = new Map<string, THREE.Mesh>();
+  private nodeLabels = new Map<string, THREE.Sprite>();
 
-  // Pre-allocated edge geometry — update positions in place, no realloc
-  private edgePositions: Float32Array;
-  private edgeGeo: THREE.BufferGeometry;
-  private edgeLines: THREE.LineSegments;
-  private activeEdgeCount = 0;
+  // Per-protocol edge line groups (pre-allocated buffers)
+  private protoEdges = new Map<string, {
+    positions: Float32Array;
+    geo: THREE.BufferGeometry;
+    lines: THREE.LineSegments;
+    count: number;
+  }>();
 
   selectedNode: Node | null = null;
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
     renderer.scene.add(this.nodeGroup);
+    renderer.scene.add(this.labelGroup);
 
-    // Pre-allocate edge buffer for MAX_EDGES lines
-    this.edgePositions = new Float32Array(MAX_EDGES * 6);
-    this.edgeGeo = new THREE.BufferGeometry();
-    const posAttr = new THREE.BufferAttribute(this.edgePositions, 3);
-    posAttr.setUsage(THREE.DynamicDrawUsage);
-    this.edgeGeo.setAttribute("position", posAttr);
-    this.edgeGeo.setDrawRange(0, 0);
+    // Create one LineSegments per protocol with its own color
+    for (const proto of EDGE_PROTOS) {
+      const positions = new Float32Array(MAX_EDGES_PER_PROTO * 6);
+      const geo = new THREE.BufferGeometry();
+      const posAttr = new THREE.BufferAttribute(positions, 3);
+      posAttr.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute("position", posAttr);
+      geo.setDrawRange(0, 0);
 
-    this.edgeLines = new THREE.LineSegments(
-      this.edgeGeo,
-      new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.5 }),
-    );
-    renderer.scene.add(this.edgeLines);
+      const hex = PROTOCOL_COLORS[proto] ?? PROTOCOL_COLORS.OTHER;
+      const lines = new THREE.LineSegments(
+        geo,
+        new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.6 }),
+      );
+      renderer.scene.add(lines);
+      this.protoEdges.set(proto, { positions, geo, lines, count: 0 });
+    }
 
     this.simulation = forceSimulation()
       .numDimensions(3)
-      .force("charge", forceManyBody().strength(-80))
+      .force("charge", forceManyBody().strength(-100))
       .force("center", forceCenter())
       .force(
         "link",
         forceLink()
           .id((d: any) => d.ip)
-          .distance(60),
+          .distance(70),
       )
       .alphaDecay(0.02)
       .velocityDecay(0.3);
@@ -69,6 +83,7 @@ export class Graph {
       incomingIps.add(node.ip);
       const existing = this.nodeMap.get(node.ip);
       if (existing) {
+        // Update stats on existing node
         existing.bytes_sent = node.bytes_sent;
         existing.bytes_recv = node.bytes_recv;
         existing.packet_count = node.packet_count;
@@ -84,38 +99,49 @@ export class Graph {
         this.nodeMap.set(node.ip, simNode);
         changed = true;
 
-        // Create sphere mesh for this node
+        // Size: local nodes bigger, scaled by traffic
         const totalBytes = node.bytes_sent + node.bytes_recv;
-        const radius = Math.max(1.5, Math.log2(totalBytes + 1) * 0.6);
+        const baseRadius = node.is_local ? 3.0 : 2.0;
+        const radius = Math.max(baseRadius, Math.log2(totalBytes + 1) * 0.7);
+
+        // Color: local = bright saturated, external = dimmer
         const hue = subnetHue(node.subnet);
-        const color = new THREE.Color().setHSL(hue, node.is_local ? 0.7 : 0.4, 0.6);
+        const sat = node.is_local ? 0.8 : 0.3;
+        const lum = node.is_local ? 0.65 : 0.5;
+        const color = new THREE.Color().setHSL(hue, sat, lum);
 
         const geo = new THREE.IcosahedronGeometry(radius, 1);
         const mat = new THREE.MeshStandardMaterial({
           color,
           emissive: color,
-          emissiveIntensity: 0.2,
+          emissiveIntensity: node.is_local ? 0.3 : 0.1,
           metalness: 0.3,
-          roughness: 0.6,
+          roughness: 0.5,
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.set(simNode.x, simNode.y, simNode.z);
         this.nodeGroup.add(mesh);
         this.nodeSpheres.set(node.ip, mesh);
 
-        console.log(`[wiregraph] + node ${node.ip} r=${radius.toFixed(1)}`);
+        // Label: IP address (brighter for local)
+        const labelColor = node.is_local ? "#88ddff" : "#667799";
+        const label = createLabel(node.ip, labelColor);
+        label.position.set(simNode.x, simNode.y + radius + 5, simNode.z);
+        this.labelGroup.add(label);
+        this.nodeLabels.set(node.ip, label);
+
+        console.log(`[wiregraph] + ${node.is_local ? "local" : "remote"} ${node.ip}`);
       }
     }
 
-    // Remove stale nodes
+    // Remove stale
     for (const ip of this.nodeMap.keys()) {
       if (!incomingIps.has(ip)) {
         this.nodeMap.delete(ip);
         const mesh = this.nodeSpheres.get(ip);
-        if (mesh) {
-          this.nodeGroup.remove(mesh);
-          this.nodeSpheres.delete(ip);
-        }
+        if (mesh) { this.nodeGroup.remove(mesh); this.nodeSpheres.delete(ip); }
+        const label = this.nodeLabels.get(ip);
+        if (label) { this.labelGroup.remove(label); this.nodeLabels.delete(ip); }
         changed = true;
       }
     }
@@ -146,30 +172,42 @@ export class Graph {
   tick(): void {
     this.simulation.tick();
 
-    // Update node mesh positions
+    // Update node + label positions
     for (const [ip, simNode] of this.nodeMap) {
       const mesh = this.nodeSpheres.get(ip);
-      if (mesh) {
-        mesh.position.set(simNode.x, simNode.y, simNode.z);
-      }
+      if (mesh) mesh.position.set(simNode.x, simNode.y, simNode.z);
+      const label = this.nodeLabels.get(ip);
+      if (label) label.position.set(simNode.x, simNode.y + 8, simNode.z);
     }
 
-    // Update edge positions in pre-allocated buffer
-    const count = Math.min(this.edgeList.length, MAX_EDGES);
-    for (let i = 0; i < count; i++) {
-      const link = this.edgeList[i];
-      const si = i * 6;
-      this.edgePositions[si] = link.source.x;
-      this.edgePositions[si + 1] = link.source.y;
-      this.edgePositions[si + 2] = link.source.z;
-      this.edgePositions[si + 3] = link.target.x;
-      this.edgePositions[si + 4] = link.target.y;
-      this.edgePositions[si + 5] = link.target.z;
+    // Clear all proto edge counts
+    for (const pe of this.protoEdges.values()) {
+      pe.count = 0;
     }
 
-    const posAttr = this.edgeGeo.getAttribute("position") as THREE.BufferAttribute;
-    posAttr.needsUpdate = true;
-    this.edgeGeo.setDrawRange(0, count * 2);
+    // Bin edges by protocol into pre-allocated buffers
+    for (const link of this.edgeList) {
+      const proto = link.edge.protocol;
+      let pe = this.protoEdges.get(proto);
+      if (!pe) pe = this.protoEdges.get("OTHER")!;
+      if (pe.count >= MAX_EDGES_PER_PROTO) continue;
+
+      const si = pe.count * 6;
+      pe.positions[si] = link.source.x;
+      pe.positions[si + 1] = link.source.y;
+      pe.positions[si + 2] = link.source.z;
+      pe.positions[si + 3] = link.target.x;
+      pe.positions[si + 4] = link.target.y;
+      pe.positions[si + 5] = link.target.z;
+      pe.count++;
+    }
+
+    // Update GPU buffers
+    for (const pe of this.protoEdges.values()) {
+      const posAttr = pe.geo.getAttribute("position") as THREE.BufferAttribute;
+      posAttr.needsUpdate = true;
+      pe.geo.setDrawRange(0, pe.count * 2);
+    }
   }
 
   raycast(raycaster: THREE.Raycaster): Node | null {

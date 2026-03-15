@@ -55,7 +55,7 @@ sleep 1
 
 # Start frontend
 cd "$ROOT_DIR/frontend"
-mystral run dist/wiregraph.js --width "$WIDTH" --height "$HEIGHT" --title "wiregraph — demo" &
+mystral run dist/wiregraph.js --width "$WIDTH" --height "$HEIGHT" --title "wiregraph - demo" &
 FRONTEND_PID=$!
 
 cleanup() {
