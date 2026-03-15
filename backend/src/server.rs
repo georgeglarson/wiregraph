@@ -3,7 +3,8 @@ use std::sync::{Arc, RwLock};
 use anyhow::Result;
 use tiny_http::{Header, Response, Server};
 
-use crate::packet_store::{ExportFilter, PacketStore};
+use crate::capture::InterfaceInfo;
+use crate::packet_store::{ExportFilter, PacketQuery, PacketStore};
 use crate::topology::Topology;
 use crate::web_ui;
 
@@ -11,6 +12,7 @@ pub fn run_server(
     port: u16,
     topology: Arc<RwLock<Topology>>,
     store: Arc<RwLock<PacketStore>>,
+    interfaces: Vec<InterfaceInfo>,
 ) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
     let server = Server::http(&addr)
@@ -67,6 +69,29 @@ pub fn run_server(
                 let topo = topology.read().unwrap();
                 serde_json::to_string(&topo.stats()).ok()
             }
+            "/api/interfaces" => {
+                serde_json::to_string(&interfaces).ok()
+            }
+            "/api/retention" => {
+                let s = store.read().unwrap();
+                serde_json::to_string(&s.retention_info()).ok()
+            }
+            "/api/packets" => {
+                let query = build_packet_query(&params);
+                let s = store.read().unwrap();
+                serde_json::to_string(&s.query_packets(&query)).ok()
+            }
+            "/api/conversation" => {
+                let a = params.get("a").and_then(|v| v.parse().ok());
+                let b = params.get("b").and_then(|v| v.parse().ok());
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        let s = store.read().unwrap();
+                        serde_json::to_string(&s.conversation(a, b)).ok()
+                    }
+                    _ => Some(r#"{"error":"missing or invalid 'a' and 'b' IP parameters"}"#.to_string()),
+                }
+            }
             _ => None,
         };
 
@@ -100,6 +125,26 @@ fn parse_path(url: &str) -> (std::collections::HashMap<String, String>, String) 
         }
         None => (std::collections::HashMap::new(), url.to_string()),
     }
+}
+
+fn build_packet_query(params: &std::collections::HashMap<String, String>) -> PacketQuery {
+    let hosts = params.get("hosts").map(|h| {
+        h.split(',')
+            .filter_map(|ip| ip.parse().ok())
+            .collect()
+    }).unwrap_or_default();
+
+    let protocols = params.get("protocols").map(|p| {
+        p.split(',')
+            .map(|s| s.to_string())
+            .collect()
+    }).unwrap_or_default();
+
+    let port = params.get("port").and_then(|v| v.parse().ok());
+    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(100);
+    let offset = params.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0);
+
+    PacketQuery { hosts, protocols, port, limit, offset }
 }
 
 fn build_export_filter(params: &std::collections::HashMap<String, String>) -> ExportFilter {
@@ -174,5 +219,40 @@ mod tests {
         params.insert("hosts".to_string(), "10.0.0.1,notanip,8.8.8.8".to_string());
         let f = build_export_filter(&params);
         assert_eq!(f.hosts.len(), 2);
+    }
+
+    #[test]
+    fn build_packet_query_defaults() {
+        let params = std::collections::HashMap::new();
+        let q = build_packet_query(&params);
+        assert!(q.hosts.is_empty());
+        assert!(q.protocols.is_empty());
+        assert_eq!(q.port, None);
+        assert_eq!(q.limit, 100);
+        assert_eq!(q.offset, 0);
+    }
+
+    #[test]
+    fn build_packet_query_all_params() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("hosts".to_string(), "10.0.0.1".to_string());
+        params.insert("protocols".to_string(), "HTTP,DNS".to_string());
+        params.insert("port".to_string(), "443".to_string());
+        params.insert("limit".to_string(), "50".to_string());
+        params.insert("offset".to_string(), "10".to_string());
+        let q = build_packet_query(&params);
+        assert_eq!(q.hosts.len(), 1);
+        assert_eq!(q.protocols.len(), 2);
+        assert_eq!(q.port, Some(443));
+        assert_eq!(q.limit, 50);
+        assert_eq!(q.offset, 10);
+    }
+
+    #[test]
+    fn build_packet_query_invalid_port_ignored() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("port".to_string(), "notaport".to_string());
+        let q = build_packet_query(&params);
+        assert_eq!(q.port, None);
     }
 }

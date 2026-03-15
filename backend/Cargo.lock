@@ -2285,6 +2285,7 @@ dependencies = [
  "anyhow",
  "clap",
  "netgrep",
+ "pcap",
  "serde",
  "serde_json",
  "tiny_http",

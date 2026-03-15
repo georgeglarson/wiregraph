@@ -2,13 +2,33 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use netgrep::capture::{PacketData, PacketSource};
 use netgrep::protocol::{parse_packet, LinkType};
+use pcap::Device;
+use serde::Serialize;
 
 use crate::models::classify_protocol;
 use crate::packet_store::PacketStore;
 use crate::topology::Topology;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct InterfaceInfo {
+    pub name: String,
+    pub description: String,
+    pub addresses: Vec<String>,
+}
+
+pub fn list_interfaces() -> Result<Vec<InterfaceInfo>> {
+    let devices = Device::list().context("Failed to list network interfaces")?;
+    Ok(devices.into_iter().map(|d| {
+        InterfaceInfo {
+            name: d.name.clone(),
+            description: d.desc.unwrap_or_default(),
+            addresses: d.addresses.iter().map(|a| a.addr.to_string()).collect(),
+        }
+    }).collect())
+}
 
 struct BufferedPacket {
     data: Vec<u8>,
@@ -24,7 +44,7 @@ fn ingest_packet(
 ) {
     // Store raw packet for export
     if let Ok(mut s) = store.write() {
-        s.add(raw, timestamp);
+        s.add_with_link_type(raw, timestamp, link_type);
     }
 
     // Parse and ingest into topology
@@ -48,6 +68,11 @@ pub fn run_capture_file(
 ) -> Result<()> {
     let mut source = PacketSource::from_file(path, bpf)?;
     let link_type = source.link_type();
+
+    if let Ok(mut s) = store.write() {
+        s.set_link_type(link_type);
+    }
+
     let mut packets: Vec<BufferedPacket> = Vec::new();
 
     source.for_each_packet(|pkt: PacketData| {
@@ -110,8 +135,14 @@ pub fn run_capture_live(
     topology: Arc<RwLock<Topology>>,
     store: Arc<RwLock<PacketStore>>,
 ) -> Result<()> {
-    let mut source = PacketSource::live(interface, 65535, true, bpf, None)?;
+    // The "any" pseudo-device doesn't support promiscuous mode
+    let promisc = interface.map_or(true, |name| name != "any");
+    let mut source = PacketSource::live(interface, 65535, promisc, bpf, None)?;
     let link_type = source.link_type();
+
+    if let Ok(mut s) = store.write() {
+        s.set_link_type(link_type);
+    }
 
     source.for_each_packet(|pkt: PacketData| {
         ingest_packet(pkt.data, pkt.timestamp, link_type, &topology, &store);
