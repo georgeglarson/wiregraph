@@ -248,4 +248,147 @@ mod tests {
         assert!(topo.nodes[&ip(10, 0, 0, 1)].is_local);
         assert!(!topo.nodes[&ip(8, 8, 8, 8)].is_local);
     }
+
+    // -- Event pruning --
+
+    #[test]
+    fn old_events_pruned() {
+        let mut topo = Topology::new();
+        let t_old = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let t_new = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1010);
+
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 10, Some(t_old));
+        assert_eq!(topo.events.len(), 1);
+
+        // Ingesting a packet 10s later should prune the old one (buffer is 5s)
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 20, Some(t_new));
+        assert_eq!(topo.events.len(), 1);
+        assert_eq!(topo.events[0].bytes, 20);
+    }
+
+    #[test]
+    fn events_within_window_kept() {
+        let mut topo = Topology::new();
+        let t1 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let t2 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1002);
+        let t3 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1004);
+
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 10, Some(t1));
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 20, Some(t2));
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 30, Some(t3));
+
+        assert_eq!(topo.events.len(), 3);
+    }
+
+    // -- mark_inactive --
+
+    #[test]
+    fn mark_inactive_flags_old_edges() {
+        let mut topo = Topology::new();
+        let t_old = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
+
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 10, Some(t_old));
+
+        // Edge was just created, should be active
+        assert!(topo.edges.values().all(|e| e.active));
+
+        // mark_inactive compares against now() — edge from epoch+100s is ancient
+        topo.mark_inactive();
+        assert!(topo.edges.values().all(|e| !e.active));
+    }
+
+    // -- Edge cases --
+
+    #[test]
+    fn same_src_and_dst() {
+        let mut topo = Topology::new();
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 1), Some(1), Some(80), "TCP", 100, None);
+
+        // Same IP as both src and dst should create 1 node
+        assert_eq!(topo.nodes.len(), 1);
+        let node = &topo.nodes[&ip(10, 0, 0, 1)];
+        assert_eq!(node.bytes_sent, 100);
+        assert_eq!(node.bytes_recv, 100);
+        assert_eq!(node.packet_count, 2); // counted once as src, once as dst
+    }
+
+    #[test]
+    fn zero_byte_packet() {
+        let mut topo = Topology::new();
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 0, None);
+
+        assert_eq!(topo.total_bytes, 0);
+        assert_eq!(topo.total_packets, 1);
+        let edge = topo.edges.values().next().unwrap();
+        assert_eq!(edge.bytes, 0);
+        assert_eq!(edge.packets, 1);
+    }
+
+    #[test]
+    fn no_dst_port_uses_zero() {
+        let mut topo = Topology::new();
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), None, None, "ICMP", 64, None);
+
+        let edge = topo.edges.values().next().unwrap();
+        assert_eq!(edge.dst_port, 0);
+    }
+
+    #[test]
+    fn events_since_returns_empty_when_none_match() {
+        let mut topo = Topology::new();
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 10, Some(t));
+
+        let events = topo.events_since(2000.0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn events_since_returns_all_when_since_is_zero() {
+        let mut topo = Topology::new();
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(1), Some(80), "TCP", 10, Some(t));
+
+        let events = topo.events_since(0.0);
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn topology_response_empty_when_no_data() {
+        let topo = Topology::new();
+        let resp = topo.topology_response();
+        assert!(resp.nodes.is_empty());
+        assert!(resp.edges.is_empty());
+    }
+
+    #[test]
+    fn stats_empty_topology() {
+        let topo = Topology::new();
+        let stats = topo.stats();
+        assert_eq!(stats.total_packets, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.host_count, 0);
+        assert_eq!(stats.edge_count, 0);
+    }
+
+    #[test]
+    fn many_hosts_tracked() {
+        let mut topo = Topology::new();
+        for i in 1..=50u8 {
+            topo.ingest(ip(10, 0, 0, i), ip(10, 0, 1, i), Some(1), Some(80), "TCP", 100, None);
+        }
+        assert_eq!(topo.nodes.len(), 100);
+        assert_eq!(topo.edges.len(), 50);
+        assert_eq!(topo.total_packets, 50);
+    }
+
+    #[test]
+    fn bidirectional_traffic_creates_two_edges() {
+        let mut topo = Topology::new();
+        topo.ingest(ip(10, 0, 0, 1), ip(10, 0, 0, 2), Some(12345), Some(80), "HTTP", 100, None);
+        topo.ingest(ip(10, 0, 0, 2), ip(10, 0, 0, 1), Some(80), Some(12345), "HTTP", 200, None);
+
+        // EdgeKey is directional, so A→B:80 and B→A:12345 are different edges
+        assert_eq!(topo.edges.len(), 2);
+    }
 }

@@ -66,3 +66,81 @@ fn parse_path(url: &str) -> (Option<f64>, String) {
         None => (None, url.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_path_no_query() {
+        let (since, path) = parse_path("/api/topology");
+        assert_eq!(path, "/api/topology");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_with_since() {
+        let (since, path) = parse_path("/api/events?since=1710500000.5");
+        assert_eq!(path, "/api/events");
+        assert!((since.unwrap() - 1710500000.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_path_since_zero() {
+        let (since, _) = parse_path("/api/events?since=0");
+        assert!((since.unwrap()).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_path_since_among_other_params() {
+        let (since, path) = parse_path("/api/events?foo=bar&since=42.0&baz=qux");
+        assert_eq!(path, "/api/events");
+        assert!((since.unwrap() - 42.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_path_no_since_param() {
+        let (since, path) = parse_path("/api/events?foo=bar");
+        assert_eq!(path, "/api/events");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_invalid_since_value() {
+        let (since, path) = parse_path("/api/events?since=notanumber");
+        assert_eq!(path, "/api/events");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_empty_since() {
+        let (since, _) = parse_path("/api/events?since=");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_root() {
+        let (since, path) = parse_path("/");
+        assert_eq!(path, "/");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_empty_query() {
+        let (since, path) = parse_path("/api/stats?");
+        assert_eq!(path, "/api/stats");
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn parse_path_negative_since() {
+        let (since, _) = parse_path("/api/events?since=-1.0");
+        assert!((since.unwrap() - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_path_large_since() {
+        let (since, _) = parse_path("/api/events?since=1710500000000.123");
+        assert!(since.is_some());
+    }
+}

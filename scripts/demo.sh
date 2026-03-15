@@ -4,6 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Ensure cargo is in PATH
+[[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+
 PORT="${PORT:-9877}"
 PCAP_FILE="${1:-$ROOT_DIR/sample.pcap}"
 
