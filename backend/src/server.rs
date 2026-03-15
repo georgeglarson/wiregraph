@@ -4,6 +4,7 @@ use anyhow::Result;
 use tiny_http::{Header, Response, Server};
 
 use crate::topology::Topology;
+use crate::web_ui;
 
 pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
@@ -36,14 +37,20 @@ pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
             _ => None,
         };
 
-        let response = match response_body {
-            Some(body) => Response::from_string(body)
-                .with_header(json_header.clone())
-                .with_header(cors_header.clone()),
-            None => Response::from_string(r#"{"error":"not found"}"#)
-                .with_status_code(404)
-                .with_header(json_header.clone())
-                .with_header(cors_header.clone()),
+        let response = if path_base == "/" || path_base == "/index.html" {
+            let html_header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
+            Response::from_string(web_ui::INDEX_HTML)
+                .with_header(html_header)
+        } else {
+            match response_body {
+                Some(body) => Response::from_string(body)
+                    .with_header(json_header.clone())
+                    .with_header(cors_header.clone()),
+                None => Response::from_string(r#"{"error":"not found"}"#)
+                    .with_status_code(404)
+                    .with_header(json_header.clone())
+                    .with_header(cors_header.clone()),
+            }
         };
 
         let _ = request.respond(response);

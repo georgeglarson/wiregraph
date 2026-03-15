@@ -2,6 +2,7 @@ mod capture;
 mod models;
 mod server;
 mod topology;
+mod web_ui;
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
