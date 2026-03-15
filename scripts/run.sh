@@ -4,11 +4,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Ensure cargo is in PATH
+# Ensure cargo and mystral are in PATH
 [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+[[ -d "$HOME/.mystral" ]] && export PATH="$PATH:$HOME/.mystral"
 
 PORT="${PORT:-9877}"
-INTERFACE="${1:-}"
+
+usage() {
+    echo "usage: $0 <interface|pcap-file> [bpf-filter]"
+    echo ""
+    echo "  $0 eth0              # live capture on eth0 (needs root)"
+    echo "  $0 ../sample.pcap    # replay pcap file"
+    echo "  $0 eth0 'port 80'    # live capture with BPF filter"
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+
+TARGET="$1"
 BPF_FILTER="${2:-}"
 
 echo "=== wiregraph ==="
@@ -31,9 +44,14 @@ echo "[3/3] launching..."
 echo ""
 
 BACKEND_ARGS=(--port "$PORT")
-if [ -n "$INTERFACE" ]; then
-    BACKEND_ARGS+=(--interface "$INTERFACE")
+
+# Detect whether target is a file or an interface name
+if [ -f "$TARGET" ]; then
+    BACKEND_ARGS+=(--file "$TARGET")
+else
+    BACKEND_ARGS+=(--interface "$TARGET")
 fi
+
 if [ -n "$BPF_FILTER" ]; then
     BACKEND_ARGS+=(--filter "$BPF_FILTER")
 fi
