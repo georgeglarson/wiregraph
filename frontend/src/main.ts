@@ -6,29 +6,23 @@ import { ParticleSystem } from "./particles";
 import { Poller } from "./poller";
 import { Node, PacketEvent } from "./types";
 
+declare const canvas: HTMLCanvasElement;
+
 async function main(): Promise<void> {
-  // State
+  console.log("[wiregraph] starting");
+
   let paused = false;
   let pendingEvents: PacketEvent[] = [];
   let latestNodes: Map<string, Node> = new Map();
 
-  // Init
-  const canvas = document.createElement("canvas");
-  canvas.style.position = "absolute";
-  canvas.style.top = "0";
-  canvas.style.left = "0";
-  document.body.style.margin = "0";
-  document.body.style.overflow = "hidden";
-  document.body.style.background = "#0a0a1a";
-  document.body.appendChild(canvas);
+  const renderer = await Renderer.create();
+  console.log("[wiregraph] renderer ready");
 
-  const renderer = await Renderer.create(canvas);
   const graph = new Graph(renderer);
-  const overlay = new Overlay();
+  const overlay = new Overlay(renderer.width, renderer.height);
   const particles = new ParticleSystem(renderer.scene);
   const poller = new Poller();
 
-  // Polling callbacks
   poller.onTopology = (data) => {
     if (paused) return;
     graph.update(data);
@@ -50,36 +44,29 @@ async function main(): Promise<void> {
     overlay.setStats(stats);
   };
 
-  // Node click detection
-  canvas.addEventListener("click", () => {
+  canvas.addEventListener("click", (e: MouseEvent) => {
     renderer.raycaster.setFromCamera(renderer.mouse, renderer.camera);
     const hit = graph.raycast(renderer.raycaster);
     graph.selectedNode = hit;
     overlay.setSelectedNode(hit);
   });
 
-  // Keyboard controls
-  document.addEventListener("keydown", (e) => {
+  canvas.addEventListener("keydown", (e: KeyboardEvent) => {
     switch (e.key.toLowerCase()) {
       case " ":
         paused = !paused;
-        e.preventDefault();
         break;
       case "r":
         renderer.resetCamera();
         break;
       case "f":
         if (graph.selectedNode) {
-          const n = graph.selectedNode;
-          if (n.x !== undefined && n.y !== undefined && n.z !== undefined) {
-            renderer.resetCamera();
-          }
+          renderer.resetCamera();
         }
         break;
     }
   });
 
-  // Build node position map for particles
   function getNodePositions(): Map<string, THREE.Vector3> {
     const positions = new Map<string, THREE.Vector3>();
     for (const [ip, node] of latestNodes) {
@@ -90,9 +77,9 @@ async function main(): Promise<void> {
     return positions;
   }
 
-  // Render loop
+  let frameCount = 0;
   function animate(): void {
-    requestAnimationFrame(animate);
+    frameCount++;
 
     if (!paused) {
       graph.tick();
@@ -108,11 +95,20 @@ async function main(): Promise<void> {
 
     renderer.render();
     overlay.render();
+
+    if (frameCount % 120 === 0) {
+      console.log(`[wiregraph] frame ${frameCount}, nodes=${latestNodes.size}`);
+    }
+
+    requestAnimationFrame(animate);
   }
 
-  // Start
   poller.start();
   animate();
+  console.log("[wiregraph] running");
 }
 
-main().catch((err) => console.error("wiregraph init failed:", err));
+main().catch((e) => {
+  console.error("[wiregraph] init failed:", e.message);
+  console.error("[wiregraph] stack:", e.stack);
+});

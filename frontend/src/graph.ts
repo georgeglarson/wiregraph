@@ -10,42 +10,42 @@ interface SimNode extends Node {
   z: number;
 }
 
-interface SimLink {
-  source: SimNode;
-  target: SimNode;
-  edge: Edge;
-}
+const MAX_EDGES = 256;
 
 export class Graph {
   private renderer: Renderer;
   private nodeMap = new Map<string, SimNode>();
-  private edgeList: SimLink[] = [];
+  private edgeList: { source: SimNode; target: SimNode; edge: Edge }[] = [];
   private simulation: any;
 
-  private nodeMesh: THREE.InstancedMesh | null = null;
-  private edgeLines: THREE.LineSegments | null = null;
-  private nodeGeometry: THREE.IcosahedronGeometry;
-  private nodeMaterial: THREE.MeshPhongMaterial;
-  private edgeMaterial: THREE.LineBasicMaterial;
+  private nodeGroup = new THREE.Group();
+  private nodeSpheres = new Map<string, THREE.Mesh>();
 
-  private dummy = new THREE.Object3D();
-  private color = new THREE.Color();
+  // Pre-allocated edge geometry — update positions in place, no realloc
+  private edgePositions: Float32Array;
+  private edgeGeo: THREE.BufferGeometry;
+  private edgeLines: THREE.LineSegments;
+  private activeEdgeCount = 0;
 
   selectedNode: Node | null = null;
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
-    this.nodeGeometry = new THREE.IcosahedronGeometry(3, 2);
-    this.nodeMaterial = new THREE.MeshPhongMaterial({
-      vertexColors: true,
-      emissive: new THREE.Color(0x112244),
-      emissiveIntensity: 0.3,
-    });
-    this.edgeMaterial = new THREE.LineBasicMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.6,
-    });
+    renderer.scene.add(this.nodeGroup);
+
+    // Pre-allocate edge buffer for MAX_EDGES lines
+    this.edgePositions = new Float32Array(MAX_EDGES * 6);
+    this.edgeGeo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(this.edgePositions, 3);
+    posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.edgeGeo.setAttribute("position", posAttr);
+    this.edgeGeo.setDrawRange(0, 0);
+
+    this.edgeLines = new THREE.LineSegments(
+      this.edgeGeo,
+      new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.5 }),
+    );
+    renderer.scene.add(this.edgeLines);
 
     this.simulation = forceSimulation()
       .numDimensions(3)
@@ -64,7 +64,6 @@ export class Graph {
   update(data: TopologyResponse): void {
     let changed = false;
 
-    // Update/add nodes
     const incomingIps = new Set<string>();
     for (const node of data.nodes) {
       incomingIps.add(node.ip);
@@ -84,6 +83,27 @@ export class Graph {
         };
         this.nodeMap.set(node.ip, simNode);
         changed = true;
+
+        // Create sphere mesh for this node
+        const totalBytes = node.bytes_sent + node.bytes_recv;
+        const radius = Math.max(1.5, Math.log2(totalBytes + 1) * 0.6);
+        const hue = subnetHue(node.subnet);
+        const color = new THREE.Color().setHSL(hue, node.is_local ? 0.7 : 0.4, 0.6);
+
+        const geo = new THREE.IcosahedronGeometry(radius, 1);
+        const mat = new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: 0.2,
+          metalness: 0.3,
+          roughness: 0.6,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(simNode.x, simNode.y, simNode.z);
+        this.nodeGroup.add(mesh);
+        this.nodeSpheres.set(node.ip, mesh);
+
+        console.log(`[wiregraph] + node ${node.ip} r=${radius.toFixed(1)}`);
       }
     }
 
@@ -91,11 +111,16 @@ export class Graph {
     for (const ip of this.nodeMap.keys()) {
       if (!incomingIps.has(ip)) {
         this.nodeMap.delete(ip);
+        const mesh = this.nodeSpheres.get(ip);
+        if (mesh) {
+          this.nodeGroup.remove(mesh);
+          this.nodeSpheres.delete(ip);
+        }
         changed = true;
       }
     }
 
-    // Rebuild edges
+    // Rebuild edge list
     this.edgeList = [];
     for (const edge of data.edges) {
       const src = this.nodeMap.get(edge.source);
@@ -116,94 +141,45 @@ export class Graph {
       );
       this.simulation.alpha(0.5).restart();
     }
-
-    this.rebuildMeshes();
-  }
-
-  private rebuildMeshes(): void {
-    const nodes = Array.from(this.nodeMap.values());
-    const scene = this.renderer.scene;
-
-    // Remove old meshes
-    if (this.nodeMesh) scene.remove(this.nodeMesh);
-    if (this.edgeLines) scene.remove(this.edgeLines);
-
-    // Nodes
-    if (nodes.length > 0) {
-      this.nodeMesh = new THREE.InstancedMesh(this.nodeGeometry, this.nodeMaterial, nodes.length);
-
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        const totalBytes = n.bytes_sent + n.bytes_recv;
-        const scale = Math.max(1, Math.log2(totalBytes + 1) * 0.5);
-
-        this.dummy.position.set(n.x ?? 0, n.y ?? 0, n.z ?? 0);
-        this.dummy.scale.setScalar(scale);
-        this.dummy.updateMatrix();
-        this.nodeMesh.setMatrixAt(i, this.dummy.matrix);
-
-        // Color by subnet hash
-        const hue = subnetHue(n.subnet);
-        const saturation = n.is_local ? 0.7 : 0.4;
-        const lightness = 0.6;
-        this.color.setHSL(hue, saturation, lightness);
-        this.nodeMesh.setColorAt(i, this.color);
-      }
-
-      this.nodeMesh.instanceMatrix.needsUpdate = true;
-      if (this.nodeMesh.instanceColor) this.nodeMesh.instanceColor.needsUpdate = true;
-      scene.add(this.nodeMesh);
-    }
-
-    // Edges
-    if (this.edgeList.length > 0) {
-      const positions = new Float32Array(this.edgeList.length * 6);
-      const colors = new Float32Array(this.edgeList.length * 6);
-
-      for (let i = 0; i < this.edgeList.length; i++) {
-        const link = this.edgeList[i];
-        const si = i * 6;
-
-        positions[si] = link.source.x ?? 0;
-        positions[si + 1] = link.source.y ?? 0;
-        positions[si + 2] = link.source.z ?? 0;
-        positions[si + 3] = link.target.x ?? 0;
-        positions[si + 4] = link.target.y ?? 0;
-        positions[si + 5] = link.target.z ?? 0;
-
-        const protoColor = PROTOCOL_COLORS[link.edge.protocol] ?? PROTOCOL_COLORS.OTHER;
-        this.color.setHex(protoColor);
-        const alpha = link.edge.active ? 1.0 : 0.3;
-        colors[si] = this.color.r * alpha;
-        colors[si + 1] = this.color.g * alpha;
-        colors[si + 2] = this.color.b * alpha;
-        colors[si + 3] = this.color.r * alpha;
-        colors[si + 4] = this.color.g * alpha;
-        colors[si + 5] = this.color.b * alpha;
-      }
-
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-
-      this.edgeLines = new THREE.LineSegments(geometry, this.edgeMaterial);
-      scene.add(this.edgeLines);
-    }
   }
 
   tick(): void {
     this.simulation.tick();
-    this.rebuildMeshes();
+
+    // Update node mesh positions
+    for (const [ip, simNode] of this.nodeMap) {
+      const mesh = this.nodeSpheres.get(ip);
+      if (mesh) {
+        mesh.position.set(simNode.x, simNode.y, simNode.z);
+      }
+    }
+
+    // Update edge positions in pre-allocated buffer
+    const count = Math.min(this.edgeList.length, MAX_EDGES);
+    for (let i = 0; i < count; i++) {
+      const link = this.edgeList[i];
+      const si = i * 6;
+      this.edgePositions[si] = link.source.x;
+      this.edgePositions[si + 1] = link.source.y;
+      this.edgePositions[si + 2] = link.source.z;
+      this.edgePositions[si + 3] = link.target.x;
+      this.edgePositions[si + 4] = link.target.y;
+      this.edgePositions[si + 5] = link.target.z;
+    }
+
+    const posAttr = this.edgeGeo.getAttribute("position") as THREE.BufferAttribute;
+    posAttr.needsUpdate = true;
+    this.edgeGeo.setDrawRange(0, count * 2);
   }
 
   raycast(raycaster: THREE.Raycaster): Node | null {
-    if (!this.nodeMesh) return null;
-    const intersects = raycaster.intersectObject(this.nodeMesh);
+    const intersects = raycaster.intersectObjects(this.nodeGroup.children);
     if (intersects.length > 0) {
-      const idx = intersects[0].instanceId;
-      if (idx !== undefined) {
-        const nodes = Array.from(this.nodeMap.values());
-        return nodes[idx] ?? null;
+      const hitMesh = intersects[0].object;
+      for (const [ip, mesh] of this.nodeSpheres) {
+        if (mesh === hitMesh) {
+          return this.nodeMap.get(ip) ?? null;
+        }
       }
     }
     return null;

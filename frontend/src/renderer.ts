@@ -1,27 +1,34 @@
 import * as THREE from "three/webgpu";
 
+// Mystral provides a global canvas wired to the WebGPU surface.
+// In a browser, we'd create our own — but here we must use theirs.
+declare const canvas: HTMLCanvasElement;
+
 export class Renderer {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGPURenderer;
   raycaster: THREE.Raycaster;
   mouse: THREE.Vector2;
+  width: number;
+  height: number;
 
   private isDragging = false;
   private prevMouse = { x: 0, y: 0 };
   private spherical = { radius: 300, phi: Math.PI / 3, theta: 0 };
   private target = new THREE.Vector3(0, 0, 0);
 
-  private constructor(canvas: HTMLCanvasElement, renderer: THREE.WebGPURenderer) {
+  private constructor(gpuRenderer: THREE.WebGPURenderer, w: number, h: number) {
+    this.width = w;
+    this.height = h;
+
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0a0a1a);
 
-    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+    this.camera = new THREE.PerspectiveCamera(60, w / h, 1, 5000);
     this.updateCameraPosition();
 
-    this.renderer = renderer;
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer = gpuRenderer;
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
@@ -43,25 +50,38 @@ export class Renderer {
     grid.position.y = -100;
     this.scene.add(grid);
 
-    this.setupControls(canvas);
-    this.setupResize();
+    this.setupControls();
   }
 
-  static async create(canvas: HTMLCanvasElement): Promise<Renderer> {
-    const gpuRenderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+  static async create(): Promise<Renderer> {
+    const w = canvas.width || 1280;
+    const h = canvas.height || 720;
+
+    console.log(`[wiregraph] init renderer ${w}x${h}`);
+
+    const gpuRenderer = new THREE.WebGPURenderer({
+      canvas: canvas,
+      antialias: false,
+    });
     await gpuRenderer.init();
-    return new Renderer(canvas, gpuRenderer);
+
+    gpuRenderer.setSize(w, h, false);
+    gpuRenderer.setPixelRatio(1);
+
+    console.log("[wiregraph] WebGPU ready");
+
+    return new Renderer(gpuRenderer, w, h);
   }
 
-  private setupControls(canvas: HTMLCanvasElement): void {
-    canvas.addEventListener("mousedown", (e) => {
+  private setupControls(): void {
+    canvas.addEventListener("mousedown", (e: MouseEvent) => {
       this.isDragging = true;
       this.prevMouse = { x: e.clientX, y: e.clientY };
     });
 
-    canvas.addEventListener("mousemove", (e) => {
-      this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-      this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    canvas.addEventListener("mousemove", (e: MouseEvent) => {
+      this.mouse.x = (e.clientX / this.width) * 2 - 1;
+      this.mouse.y = -(e.clientY / this.height) * 2 + 1;
 
       if (!this.isDragging) return;
 
@@ -78,17 +98,9 @@ export class Renderer {
       this.isDragging = false;
     });
 
-    canvas.addEventListener("wheel", (e) => {
+    canvas.addEventListener("wheel", (e: WheelEvent) => {
       this.spherical.radius = Math.max(50, Math.min(2000, this.spherical.radius + e.deltaY * 0.5));
       this.updateCameraPosition();
-    });
-  }
-
-  private setupResize(): void {
-    window.addEventListener("resize", () => {
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
     });
   }
 
