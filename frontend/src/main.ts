@@ -30,6 +30,9 @@ async function main(): Promise<void> {
     for (const node of data.nodes) {
       latestNodes.set(node.ip, node);
     }
+    if (data.nodes.length > 0) {
+      console.log(`[wiregraph] topo: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+    }
   };
 
   poller.onEvents = (events) => {

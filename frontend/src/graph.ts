@@ -3,7 +3,8 @@ import * as THREE from "three/webgpu";
 import { forceSimulation, forceLink, forceManyBody, forceCenter } from "d3-force-3d";
 import { Node, Edge, TopologyResponse, PROTOCOL_COLORS } from "./types";
 import { Renderer } from "./renderer";
-import { createLabel } from "./labels";
+// Labels disabled — creating CanvasTexture mid-render crashes Mystral's Dawn
+// import { createLabel } from "./labels";
 
 interface SimNode extends Node {
   x: number;
@@ -12,8 +13,6 @@ interface SimNode extends Node {
 }
 
 const MAX_EDGES_PER_PROTO = 64;
-
-// Protocols we track separately for colored edges
 const EDGE_PROTOS = ["HTTP", "TLS", "DNS", "SSH", "TCP", "UDP", "ICMP", "NTP", "SMTP", "DHCP", "OTHER"] as const;
 
 export class Graph {
@@ -22,13 +21,14 @@ export class Graph {
   private edgeList: { source: SimNode; target: SimNode; edge: Edge }[] = [];
   private simulation: any;
 
-  // Node meshes + label sprites
   private nodeGroup = new THREE.Group();
   private labelGroup = new THREE.Group();
   private nodeSpheres = new Map<string, THREE.Mesh>();
   private nodeLabels = new Map<string, THREE.Sprite>();
 
-  // Per-protocol edge line groups (pre-allocated buffers)
+  // Queue of nodes waiting to have their meshes created (done in tick, not async callback)
+  private pendingNodes: SimNode[] = [];
+
   private protoEdges = new Map<string, {
     positions: Float32Array;
     geo: THREE.BufferGeometry;
@@ -43,7 +43,6 @@ export class Graph {
     renderer.scene.add(this.nodeGroup);
     renderer.scene.add(this.labelGroup);
 
-    // Create one LineSegments per protocol with its own color
     for (const proto of EDGE_PROTOS) {
       const positions = new Float32Array(MAX_EDGES_PER_PROTO * 6);
       const geo = new THREE.BufferGeometry();
@@ -83,7 +82,6 @@ export class Graph {
       incomingIps.add(node.ip);
       const existing = this.nodeMap.get(node.ip);
       if (existing) {
-        // Update stats on existing node
         existing.bytes_sent = node.bytes_sent;
         existing.bytes_recv = node.bytes_recv;
         existing.packet_count = node.packet_count;
@@ -98,39 +96,8 @@ export class Graph {
         };
         this.nodeMap.set(node.ip, simNode);
         changed = true;
-
-        // Size: local nodes bigger, scaled by traffic
-        const totalBytes = node.bytes_sent + node.bytes_recv;
-        const baseRadius = node.is_local ? 3.0 : 2.0;
-        const radius = Math.max(baseRadius, Math.log2(totalBytes + 1) * 0.7);
-
-        // Color: local = bright saturated, external = dimmer
-        const hue = subnetHue(node.subnet);
-        const sat = node.is_local ? 0.8 : 0.3;
-        const lum = node.is_local ? 0.65 : 0.5;
-        const color = new THREE.Color().setHSL(hue, sat, lum);
-
-        const geo = new THREE.IcosahedronGeometry(radius, 1);
-        const mat = new THREE.MeshStandardMaterial({
-          color,
-          emissive: color,
-          emissiveIntensity: node.is_local ? 0.3 : 0.1,
-          metalness: 0.3,
-          roughness: 0.5,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.set(simNode.x, simNode.y, simNode.z);
-        this.nodeGroup.add(mesh);
-        this.nodeSpheres.set(node.ip, mesh);
-
-        // Label: IP address (brighter for local)
-        const labelColor = node.is_local ? "#88ddff" : "#667799";
-        const label = createLabel(node.ip, labelColor);
-        label.position.set(simNode.x, simNode.y + radius + 5, simNode.z);
-        this.labelGroup.add(label);
-        this.nodeLabels.set(node.ip, label);
-
-        console.log(`[wiregraph] + ${node.is_local ? "local" : "remote"} ${node.ip}`);
+        // Queue for mesh creation in tick() — not here in async callback
+        this.pendingNodes.push(simNode);
       }
     }
 
@@ -170,9 +137,17 @@ export class Graph {
   }
 
   tick(): void {
+    // Create meshes for queued nodes (safe — we're in the animation frame)
+    if (this.pendingNodes.length > 0) {
+      for (const simNode of this.pendingNodes) {
+        this.createNodeMesh(simNode);
+      }
+      this.pendingNodes = [];
+    }
+
     this.simulation.tick();
 
-    // Update node + label positions
+    // Update positions
     for (const [ip, simNode] of this.nodeMap) {
       const mesh = this.nodeSpheres.get(ip);
       if (mesh) mesh.position.set(simNode.x, simNode.y, simNode.z);
@@ -180,12 +155,11 @@ export class Graph {
       if (label) label.position.set(simNode.x, simNode.y + 8, simNode.z);
     }
 
-    // Clear all proto edge counts
+    // Update edges
     for (const pe of this.protoEdges.values()) {
       pe.count = 0;
     }
 
-    // Bin edges by protocol into pre-allocated buffers
     for (const link of this.edgeList) {
       const proto = link.edge.protocol;
       let pe = this.protoEdges.get(proto);
@@ -202,12 +176,37 @@ export class Graph {
       pe.count++;
     }
 
-    // Update GPU buffers
     for (const pe of this.protoEdges.values()) {
       const posAttr = pe.geo.getAttribute("position") as THREE.BufferAttribute;
       posAttr.needsUpdate = true;
       pe.geo.setDrawRange(0, pe.count * 2);
     }
+  }
+
+  private createNodeMesh(node: SimNode): void {
+    const totalBytes = node.bytes_sent + node.bytes_recv;
+    const baseRadius = node.is_local ? 3.0 : 2.0;
+    const radius = Math.max(baseRadius, Math.log2(totalBytes + 1) * 0.7);
+
+    const hue = subnetHue(node.subnet);
+    const sat = node.is_local ? 0.8 : 0.3;
+    const lum = node.is_local ? 0.65 : 0.5;
+    const color = new THREE.Color().setHSL(hue, sat, lum);
+
+    const geo = new THREE.IcosahedronGeometry(radius, 1);
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: node.is_local ? 0.3 : 0.1,
+      metalness: 0.3,
+      roughness: 0.5,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(node.x, node.y, node.z);
+    this.nodeGroup.add(mesh);
+    this.nodeSpheres.set(node.ip, mesh);
+
+    console.log(`[wiregraph] + ${node.is_local ? "local" : "remote"} ${node.ip}`);
   }
 
   raycast(raycaster: THREE.Raycaster): Node | null {
