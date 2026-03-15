@@ -3,10 +3,15 @@ use std::sync::{Arc, RwLock};
 use anyhow::Result;
 use tiny_http::{Header, Response, Server};
 
+use crate::packet_store::{ExportFilter, PacketStore};
 use crate::topology::Topology;
 use crate::web_ui;
 
-pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
+pub fn run_server(
+    port: u16,
+    topology: Arc<RwLock<Topology>>,
+    store: Arc<RwLock<PacketStore>>,
+) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
     let server = Server::http(&addr)
         .map_err(|e| anyhow::anyhow!("Failed to bind {}: {}", addr, e))?;
@@ -18,8 +23,36 @@ pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
 
     for request in server.incoming_requests() {
         let path = request.url().to_string();
-        let (query_since, path_base) = parse_path(&path);
+        let (params, path_base) = parse_path(&path);
 
+        // Serve web UI
+        if path_base == "/" || path_base == "/index.html" {
+            let html_header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
+            let _ = request.respond(Response::from_string(web_ui::INDEX_HTML).with_header(html_header));
+            continue;
+        }
+
+        // Pcap export
+        if path_base == "/api/export" {
+            let filter = build_export_filter(&params);
+            let s = store.read().unwrap();
+            let pcap_data = s.export_pcap(&filter);
+
+            let pcap_header = Header::from_bytes(&b"Content-Type"[..], &b"application/vnd.tcpdump.pcap"[..]).unwrap();
+            let disp_header = Header::from_bytes(
+                &b"Content-Disposition"[..],
+                &b"attachment; filename=\"wiregraph-export.pcap\""[..],
+            ).unwrap();
+            let _ = request.respond(
+                Response::from_data(pcap_data)
+                    .with_header(pcap_header)
+                    .with_header(disp_header)
+                    .with_header(cors_header.clone()),
+            );
+            continue;
+        }
+
+        // JSON API
         let response_body = match path_base.as_str() {
             "/api/topology" => {
                 let topo = topology.read().unwrap();
@@ -27,7 +60,7 @@ pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
             }
             "/api/events" => {
                 let topo = topology.read().unwrap();
-                let since = query_since.unwrap_or(0.0);
+                let since = params.get("since").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
                 serde_json::to_string(&topo.events_since(since)).ok()
             }
             "/api/stats" => {
@@ -37,20 +70,14 @@ pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
             _ => None,
         };
 
-        let response = if path_base == "/" || path_base == "/index.html" {
-            let html_header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
-            Response::from_string(web_ui::INDEX_HTML)
-                .with_header(html_header)
-        } else {
-            match response_body {
-                Some(body) => Response::from_string(body)
-                    .with_header(json_header.clone())
-                    .with_header(cors_header.clone()),
-                None => Response::from_string(r#"{"error":"not found"}"#)
-                    .with_status_code(404)
-                    .with_header(json_header.clone())
-                    .with_header(cors_header.clone()),
-            }
+        let response = match response_body {
+            Some(body) => Response::from_string(body)
+                .with_header(json_header.clone())
+                .with_header(cors_header.clone()),
+            None => Response::from_string(r#"{"error":"not found"}"#)
+                .with_status_code(404)
+                .with_header(json_header.clone())
+                .with_header(cors_header.clone()),
         };
 
         let _ = request.respond(response);
@@ -59,19 +86,36 @@ pub fn run_server(port: u16, topology: Arc<RwLock<Topology>>) -> Result<()> {
     Ok(())
 }
 
-fn parse_path(url: &str) -> (Option<f64>, String) {
+fn parse_path(url: &str) -> (std::collections::HashMap<String, String>, String) {
     match url.split_once('?') {
         Some((path, query)) => {
-            let since = query
+            let params: std::collections::HashMap<String, String> = query
                 .split('&')
-                .find_map(|param| {
+                .filter_map(|param| {
                     let (k, v) = param.split_once('=')?;
-                    if k == "since" { v.parse::<f64>().ok() } else { None }
-                });
-            (since, path.to_string())
+                    Some((k.to_string(), v.to_string()))
+                })
+                .collect();
+            (params, path.to_string())
         }
-        None => (None, url.to_string()),
+        None => (std::collections::HashMap::new(), url.to_string()),
     }
+}
+
+fn build_export_filter(params: &std::collections::HashMap<String, String>) -> ExportFilter {
+    let hosts = params.get("hosts").map(|h| {
+        h.split(',')
+            .filter_map(|ip| ip.parse().ok())
+            .collect()
+    }).unwrap_or_default();
+
+    let protocols = params.get("protocols").map(|p| {
+        p.split(',')
+            .map(|s| s.to_string())
+            .collect()
+    }).unwrap_or_default();
+
+    ExportFilter { hosts, protocols }
 }
 
 #[cfg(test)]
@@ -80,74 +124,55 @@ mod tests {
 
     #[test]
     fn parse_path_no_query() {
-        let (since, path) = parse_path("/api/topology");
+        let (params, path) = parse_path("/api/topology");
         assert_eq!(path, "/api/topology");
-        assert!(since.is_none());
+        assert!(params.is_empty());
     }
 
     #[test]
-    fn parse_path_with_since() {
-        let (since, path) = parse_path("/api/events?since=1710500000.5");
+    fn parse_path_with_params() {
+        let (params, path) = parse_path("/api/events?since=1710500000.5");
         assert_eq!(path, "/api/events");
-        assert!((since.unwrap() - 1710500000.5).abs() < 0.001);
+        assert_eq!(params.get("since").unwrap(), "1710500000.5");
     }
 
     #[test]
-    fn parse_path_since_zero() {
-        let (since, _) = parse_path("/api/events?since=0");
-        assert!((since.unwrap()).abs() < 0.001);
+    fn parse_path_multiple_params() {
+        let (params, path) = parse_path("/api/export?hosts=10.0.0.1,8.8.8.8&protocols=HTTP,DNS");
+        assert_eq!(path, "/api/export");
+        assert_eq!(params.get("hosts").unwrap(), "10.0.0.1,8.8.8.8");
+        assert_eq!(params.get("protocols").unwrap(), "HTTP,DNS");
     }
 
     #[test]
-    fn parse_path_since_among_other_params() {
-        let (since, path) = parse_path("/api/events?foo=bar&since=42.0&baz=qux");
-        assert_eq!(path, "/api/events");
-        assert!((since.unwrap() - 42.0).abs() < 0.001);
+    fn build_filter_empty() {
+        let params = std::collections::HashMap::new();
+        let f = build_export_filter(&params);
+        assert!(f.hosts.is_empty());
+        assert!(f.protocols.is_empty());
     }
 
     #[test]
-    fn parse_path_no_since_param() {
-        let (since, path) = parse_path("/api/events?foo=bar");
-        assert_eq!(path, "/api/events");
-        assert!(since.is_none());
+    fn build_filter_hosts() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("hosts".to_string(), "10.0.0.1,8.8.8.8".to_string());
+        let f = build_export_filter(&params);
+        assert_eq!(f.hosts.len(), 2);
     }
 
     #[test]
-    fn parse_path_invalid_since_value() {
-        let (since, path) = parse_path("/api/events?since=notanumber");
-        assert_eq!(path, "/api/events");
-        assert!(since.is_none());
+    fn build_filter_protocols() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("protocols".to_string(), "HTTP,DNS,TLS".to_string());
+        let f = build_export_filter(&params);
+        assert_eq!(f.protocols.len(), 3);
     }
 
     #[test]
-    fn parse_path_empty_since() {
-        let (since, _) = parse_path("/api/events?since=");
-        assert!(since.is_none());
-    }
-
-    #[test]
-    fn parse_path_root() {
-        let (since, path) = parse_path("/");
-        assert_eq!(path, "/");
-        assert!(since.is_none());
-    }
-
-    #[test]
-    fn parse_path_empty_query() {
-        let (since, path) = parse_path("/api/stats?");
-        assert_eq!(path, "/api/stats");
-        assert!(since.is_none());
-    }
-
-    #[test]
-    fn parse_path_negative_since() {
-        let (since, _) = parse_path("/api/events?since=-1.0");
-        assert!((since.unwrap() - (-1.0)).abs() < 0.001);
-    }
-
-    #[test]
-    fn parse_path_large_since() {
-        let (since, _) = parse_path("/api/events?since=1710500000000.123");
-        assert!(since.is_some());
+    fn build_filter_invalid_ip_skipped() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("hosts".to_string(), "10.0.0.1,notanip,8.8.8.8".to_string());
+        let f = build_export_filter(&params);
+        assert_eq!(f.hosts.len(), 2);
     }
 }

@@ -1,5 +1,6 @@
 mod capture;
 mod models;
+mod packet_store;
 mod server;
 mod topology;
 mod web_ui;
@@ -11,6 +12,7 @@ use std::thread;
 use anyhow::Result;
 use clap::Parser;
 
+use packet_store::PacketStore;
 use topology::Topology;
 
 #[derive(Parser)]
@@ -41,37 +43,30 @@ fn main() -> Result<()> {
     }
 
     let topology = Arc::new(RwLock::new(Topology::new()));
+    // Default to Ethernet; will be overridden once capture starts,
+    // but the store needs a link type at construction.
+    let store = Arc::new(RwLock::new(PacketStore::new(netgrep::protocol::LinkType::Ethernet)));
 
-    // Spawn capture thread
     let topo_capture = topology.clone();
+    let store_capture = store.clone();
     let capture_handle = if let Some(path) = cli.file {
         let bpf = cli.filter.clone();
         thread::spawn(move || {
-            if let Err(e) = capture::run_capture_file(
-                &path,
-                bpf.as_deref(),
-                topo_capture,
-            ) {
+            if let Err(e) = capture::run_capture_file(&path, bpf.as_deref(), topo_capture, store_capture) {
                 eprintln!("capture error: {}", e);
             }
-            eprintln!("pcap file replay complete");
         })
     } else {
         let iface = cli.interface.clone();
         let bpf = cli.filter.clone();
         thread::spawn(move || {
-            if let Err(e) = capture::run_capture_live(
-                iface.as_deref(),
-                bpf.as_deref(),
-                topo_capture,
-            ) {
+            if let Err(e) = capture::run_capture_live(iface.as_deref(), bpf.as_deref(), topo_capture, store_capture) {
                 eprintln!("capture error: {}", e);
             }
         })
     };
 
-    // Run HTTP server on main thread
-    server::run_server(cli.port, topology)?;
+    server::run_server(cli.port, topology, store)?;
 
     let _ = capture_handle.join();
     Ok(())

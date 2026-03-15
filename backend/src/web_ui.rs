@@ -70,6 +70,17 @@ body {
 /* Timeline */
 #timeline { grid-column: 2; }
 #timeline-canvas { width: 100%; height: calc(100% - 30px); display: block; }
+
+/* Export controls */
+.export-bar {
+  display: flex; align-items: center; gap: 8px;
+}
+.export-bar button {
+  background: #1e3a5f; color: #7dd3fc; border: 1px solid #2563eb; border-radius: 4px;
+  padding: 4px 12px; font: 12px monospace; cursor: pointer;
+}
+.export-bar button:hover { background: #2563eb; color: #fff; }
+.export-bar .hint { font-size: 11px; color: #475569; }
 </style>
 </head>
 <body>
@@ -82,6 +93,11 @@ body {
     <div>edges <span id="s-edges">0</span></div>
     <div>pps <span id="s-pps">0</span></div>
     <div>uptime <span id="s-up">0s</span></div>
+  </div>
+  <div class="export-bar">
+    <button id="export-all" title="Download all captured packets">Export pcap</button>
+    <button id="export-selected" title="Download only packets matching selected host" style="display:none">Export selected</button>
+    <span class="hint" id="export-hint"></span>
   </div>
 </div>
 
@@ -164,6 +180,7 @@ function render() {
   renderMatrix();
   renderProtocols();
   renderTimeline();
+  if (typeof updateExportButtons === 'function') updateExportButtons();
 }
 
 // --- Top Talkers ---
@@ -428,6 +445,36 @@ document.getElementById('matrix-canvas').addEventListener('click', (e) => {
     render();
   }
 });
+
+// --- Export ---
+function exportPcap(filter) {
+  const params = new URLSearchParams();
+  if (filter.hosts && filter.hosts.length) params.set('hosts', filter.hosts.join(','));
+  if (filter.protocols && filter.protocols.length) params.set('protocols', filter.protocols.join(','));
+  const url = '/api/export' + (params.toString() ? '?' + params : '');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'wiregraph-export.pcap';
+  a.click();
+}
+
+document.getElementById('export-all').addEventListener('click', () => exportPcap({}));
+document.getElementById('export-selected').addEventListener('click', () => {
+  if (selectedIp) exportPcap({ hosts: [selectedIp] });
+});
+
+function updateExportButtons() {
+  const selBtn = document.getElementById('export-selected');
+  const hint = document.getElementById('export-hint');
+  if (selectedIp) {
+    selBtn.style.display = '';
+    selBtn.textContent = 'Export ' + selectedIp;
+    hint.textContent = '';
+  } else {
+    selBtn.style.display = 'none';
+    hint.textContent = 'click a host to filter export';
+  }
+}
 
 // --- Start ---
 pollTopology();
