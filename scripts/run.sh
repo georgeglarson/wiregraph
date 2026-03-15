@@ -14,6 +14,8 @@ if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
 fi
 
 PORT="${PORT:-9877}"
+WIDTH="${WIDTH:-1280}"
+HEIGHT="${HEIGHT:-720}"
 
 usage() {
     echo "usage: $0 <interface|pcap-file> [bpf-filter]"
@@ -61,6 +63,9 @@ if [ -n "$BPF_FILTER" ]; then
     BACKEND_ARGS+=(--filter "$BPF_FILTER")
 fi
 
+# Kill any stale process on the port
+lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+
 # Start backend in background
 "$BACKEND_BIN" "${BACKEND_ARGS[@]}" &
 BACKEND_PID=$!
@@ -70,7 +75,7 @@ sleep 1
 
 # Start frontend
 cd "$ROOT_DIR/frontend"
-mystral run dist/wiregraph.js --width 1920 --height 1080 --title "wiregraph" &
+mystral run dist/wiregraph.js --width "$WIDTH" --height "$HEIGHT" --title "wiregraph" &
 FRONTEND_PID=$!
 
 # Cleanup on exit

@@ -14,6 +14,8 @@ if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
 fi
 
 PORT="${PORT:-9877}"
+WIDTH="${WIDTH:-1280}"
+HEIGHT="${HEIGHT:-720}"
 PCAP_FILE="${1:-$ROOT_DIR/sample.pcap}"
 
 if [ ! -f "$PCAP_FILE" ]; then
@@ -42,6 +44,9 @@ npm run build 2>&1 | tail -1
 echo "[3/3] launching..."
 echo ""
 
+# Kill any stale process on the port
+lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+
 # Start backend with pcap file
 "$BACKEND_BIN" --file "$PCAP_FILE" --port "$PORT" &
 BACKEND_PID=$!
@@ -50,7 +55,7 @@ sleep 1
 
 # Start frontend
 cd "$ROOT_DIR/frontend"
-mystral run dist/wiregraph.js --width 1920 --height 1080 --title "wiregraph — demo" &
+mystral run dist/wiregraph.js --width "$WIDTH" --height "$HEIGHT" --title "wiregraph — demo" &
 FRONTEND_PID=$!
 
 cleanup() {
