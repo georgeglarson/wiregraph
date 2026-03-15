@@ -264,25 +264,26 @@ function updateGraph(data) {
 
 // --- Simple force simulation ---
 function simTick() {
-  const alpha = 0.3;
-  const repulsion = -600;
-  const linkDist = 70;
-  const linkStrength = 0.02;
-  const centering = 0.01;
-  const damping = 0.85;
+  const repulsion = 200;
+  const linkDist = 50;
+  const linkStrength = 0.04;
+  const centering = 0.005;
+  const damping = 0.6;
+  const maxForce = 2.0;
 
   const nodeArr = [...nodes.values()];
 
-  // Repulsion (charge)
+  // Repulsion — softened with minimum distance
   for (let i = 0; i < nodeArr.length; i++) {
     for (let j = i + 1; j < nodeArr.length; j++) {
       const a = nodeArr[i], b = nodeArr[j];
       let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-      let dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-      const force = repulsion / (dist * dist);
-      const fx = dx / dist * force * alpha;
-      const fy = dy / dist * force * alpha;
-      const fz = dz / dist * force * alpha;
+      let dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist < 5) dist = 5; // prevent explosion at close range
+      const force = Math.min(maxForce, repulsion / (dist * dist));
+      const fx = dx / dist * force;
+      const fy = dy / dist * force;
+      const fz = dz / dist * force;
       a.vx -= fx; a.vy -= fy; a.vz -= fz;
       b.vx += fx; b.vy += fy; b.vz += fz;
     }
@@ -294,7 +295,7 @@ function simTick() {
     if (!a || !b) continue;
     let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
     let dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-    const force = (dist - linkDist) * linkStrength * alpha;
+    const force = (dist - linkDist) * linkStrength;
     const fx = dx / dist * force;
     const fy = dy / dist * force;
     const fz = dz / dist * force;
