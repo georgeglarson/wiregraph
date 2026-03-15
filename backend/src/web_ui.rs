@@ -5,398 +5,434 @@ pub const INDEX_HTML: &str = r##"<!DOCTYPE html>
 <title>wiregraph</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0a0a1a; color: #88aadd; font: 13px/1.4 monospace; overflow: hidden; }
-canvas { position: absolute; top: 0; left: 0; }
-
-#hud {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  pointer-events: none; z-index: 10;
+body {
+  background: #0b0e17; color: #c0ccdd; font: 13px/1.5 'JetBrains Mono', 'Fira Code', monospace;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr 1fr;
+  gap: 8px; padding: 8px; height: 100vh;
+}
+.panel {
+  background: #111827; border: 1px solid #1e293b; border-radius: 6px;
+  padding: 12px; overflow: auto;
+}
+.panel h2 {
+  color: #7dd3fc; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 1px; margin-bottom: 8px; border-bottom: 1px solid #1e293b;
+  padding-bottom: 4px;
 }
 
-#stats {
-  position: absolute; top: 12px; left: 12px;
-  background: rgba(10,10,30,0.85); border: 1px solid #334466;
-  padding: 10px 14px; border-radius: 4px;
+/* Header bar */
+#header {
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+  background: #111827; border: 1px solid #1e293b; border-radius: 6px; padding: 8px 16px;
 }
-#stats h2 { color: #aaccff; font-size: 14px; margin-bottom: 6px; }
-#stats div { margin: 2px 0; }
+#header h1 { color: #7dd3fc; font-size: 16px; font-weight: bold; }
+#header .stats { display: flex; gap: 20px; font-size: 12px; color: #64748b; }
+#header .stats span { color: #94a3b8; }
 
-#selection {
-  position: absolute; top: 12px; right: 12px;
-  background: rgba(10,10,30,0.85); border: 1px solid #446688;
-  padding: 10px 14px; border-radius: 4px; display: none; min-width: 220px;
+/* Hosts table */
+#hosts { grid-column: 1; }
+#hosts table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#hosts th {
+  text-align: left; color: #64748b; font-weight: normal; padding: 4px 8px;
+  border-bottom: 1px solid #1e293b; cursor: pointer; user-select: none;
 }
-#selection h3 { color: #aaccff; font-size: 13px; margin-bottom: 4px; }
-#selection div { margin: 2px 0; }
-#selection .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin: 1px 2px; }
+#hosts th:hover { color: #7dd3fc; }
+#hosts td { padding: 4px 8px; border-bottom: 1px solid #0f172a; }
+#hosts tr:hover td { background: #1e293b; }
+#hosts tr.selected td { background: #1e3a5f; }
+.ip { color: #e2e8f0; font-weight: bold; }
+.local { color: #34d399; }
+.remote { color: #94a3b8; }
+.bar-cell { position: relative; }
+.bar-fill {
+  position: absolute; left: 0; top: 2px; bottom: 2px;
+  border-radius: 2px; opacity: 0.3;
+}
+.bar-text { position: relative; z-index: 1; }
+.proto-tag {
+  display: inline-block; padding: 0 4px; border-radius: 3px;
+  font-size: 10px; margin: 0 1px; line-height: 16px;
+}
 
-#legend {
-  position: absolute; bottom: 12px; left: 12px;
-  background: rgba(10,10,30,0.85); border: 1px solid #334466;
-  padding: 8px 12px; border-radius: 4px;
-}
-#legend h4 { color: #aaccff; font-size: 11px; margin-bottom: 4px; }
-.legend-row { display: flex; align-items: center; margin: 2px 0; font-size: 11px; }
-.legend-dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; display: inline-block; }
+/* Matrix */
+#matrix { grid-column: 2; }
+#matrix-canvas { width: 100%; height: calc(100% - 30px); display: block; }
 
-#controls {
-  position: absolute; bottom: 12px; right: 12px;
-  background: rgba(10,10,30,0.6); padding: 6px 10px; border-radius: 4px;
-  font-size: 11px; color: #556688;
-}
+/* Protocols */
+#protocols { grid-column: 1; }
+#proto-bars { margin-top: 4px; }
+.proto-row { display: flex; align-items: center; margin: 3px 0; }
+.proto-label { width: 50px; font-size: 11px; text-align: right; padding-right: 8px; }
+.proto-bar-bg { flex: 1; height: 16px; background: #1e293b; border-radius: 3px; overflow: hidden; position: relative; }
+.proto-bar-fg { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.proto-bar-val { position: absolute; right: 6px; top: 0; font-size: 10px; line-height: 16px; color: #94a3b8; }
+
+/* Timeline */
+#timeline { grid-column: 2; }
+#timeline-canvas { width: 100%; height: calc(100% - 30px); display: block; }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hud">
-  <div id="stats">
-    <h2>wiregraph</h2>
-    <div>packets: <span id="s-pkts">0</span></div>
-    <div>bytes: <span id="s-bytes">0</span></div>
-    <div>hosts: <span id="s-hosts">0</span></div>
-    <div>edges: <span id="s-edges">0</span></div>
-    <div>pps: <span id="s-pps">0</span></div>
-    <div>uptime: <span id="s-uptime">0</span>s</div>
-  </div>
-  <div id="selection">
-    <h3 id="sel-ip"></h3>
-    <div>subnet: <span id="sel-subnet"></span></div>
-    <div>sent: <span id="sel-sent"></span></div>
-    <div>recv: <span id="sel-recv"></span></div>
-    <div>packets: <span id="sel-pkts"></span></div>
-    <div id="sel-protos"></div>
-  </div>
-  <div id="legend">
-    <h4>protocols</h4>
-    <div class="legend-row"><span class="legend-dot" style="background:#00ffff"></span>HTTP</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#00ff88"></span>TLS</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#ffff00"></span>DNS</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#ff8800"></span>SSH</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#4488ff"></span>TCP</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#aa44ff"></span>UDP</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#ff4444"></span>ICMP</div>
-    <div class="legend-row"><span class="legend-dot" style="background:#ff88ff"></span>NTP</div>
-  </div>
-  <div id="controls">
-    drag: rotate &nbsp; scroll: zoom &nbsp; click: select<br>
-    space: pause &nbsp; R: reset
+<div id="header">
+  <h1>wiregraph</h1>
+  <div class="stats">
+    <div>packets <span id="s-pkts">0</span></div>
+    <div>bytes <span id="s-bytes">0</span></div>
+    <div>hosts <span id="s-hosts">0</span></div>
+    <div>edges <span id="s-edges">0</span></div>
+    <div>pps <span id="s-pps">0</span></div>
+    <div>uptime <span id="s-up">0s</span></div>
   </div>
 </div>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/"
-  }
-}
-</script>
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+<div class="panel" id="hosts">
+  <h2>Top Talkers</h2>
+  <table>
+    <thead><tr>
+      <th data-sort="ip">Host</th>
+      <th data-sort="total">Traffic</th>
+      <th data-sort="packets">Pkts</th>
+      <th>Protocols</th>
+    </tr></thead>
+    <tbody id="host-body"></tbody>
+  </table>
+</div>
 
+<div class="panel" id="matrix">
+  <h2>Connection Matrix</h2>
+  <canvas id="matrix-canvas"></canvas>
+</div>
+
+<div class="panel" id="protocols">
+  <h2>Protocol Breakdown</h2>
+  <div id="proto-bars"></div>
+</div>
+
+<div class="panel" id="timeline">
+  <h2>Activity Timeline</h2>
+  <canvas id="timeline-canvas"></canvas>
+</div>
+
+<script>
 const PROTO_COLORS = {
-  HTTP: 0x00ffff, TLS: 0x00ff88, DNS: 0xffff00, SSH: 0xff8800,
-  TCP: 0x4488ff, UDP: 0xaa44ff, ICMP: 0xff4444, DHCP: 0x88ff44,
-  NTP: 0xff88ff, SMTP: 0xff6644, OTHER: 0x888888,
+  HTTP:'#00ffff', TLS:'#00ff88', DNS:'#ffff00', SSH:'#ff8800',
+  TCP:'#4488ff', UDP:'#aa44ff', ICMP:'#ff4444', DHCP:'#88ff44',
+  NTP:'#ff88ff', SMTP:'#ff6644', OTHER:'#888888',
 };
 
-// --- Three.js setup ---
-const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a1a);
-
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
-camera.position.set(150, 120, 200);
-
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.target.set(0, 0, 0);
-
-scene.add(new THREE.AmbientLight(0x334466, 1.5));
-const p1 = new THREE.PointLight(0xffffff, 2, 1000);
-p1.position.set(100, 200, 150);
-scene.add(p1);
-const p2 = new THREE.PointLight(0x4488ff, 1, 800);
-p2.position.set(-150, -100, -100);
-scene.add(p2);
-
-const grid = new THREE.GridHelper(400, 20, 0x222244, 0x111133);
-grid.position.y = -80;
-scene.add(grid);
-
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// --- Force layout (simple spring simulation, no d3 dependency) ---
-const nodes = new Map(); // ip -> { x, y, z, vx, vy, vz, mesh, label, data }
-const edges = [];        // [{ srcIp, dstIp, edge }]
-
-function subnetHue(subnet) {
-  let h = 0;
-  for (let i = 0; i < subnet.length; i++) h = (h * 31 + subnet.charCodeAt(i)) | 0;
-  return (Math.abs(h % 360)) / 360;
-}
-
-function createNodeMesh(node) {
-  const totalBytes = node.bytes_sent + node.bytes_recv;
-  const r = Math.max(node.is_local ? 3 : 2, Math.log2(totalBytes + 1) * 0.7);
-  const hue = subnetHue(node.subnet);
-  const color = new THREE.Color().setHSL(hue, node.is_local ? 0.8 : 0.3, node.is_local ? 0.65 : 0.5);
-
-  const mesh = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(r, 1),
-    new THREE.MeshStandardMaterial({
-      color, emissive: color,
-      emissiveIntensity: node.is_local ? 0.3 : 0.1,
-      metalness: 0.3, roughness: 0.5,
-    })
-  );
-  scene.add(mesh);
-
-  // Text label sprite
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = node.is_local ? '#88ddff' : '#667799';
-  ctx.font = 'bold 26px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(node.ip, 128, 32);
-  const tex = new THREE.CanvasTexture(c);
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  label.scale.set(28, 7, 1);
-  scene.add(label);
-
-  return { mesh, label, radius: r };
-}
-
-// Edge lines: one LineSegments per protocol
-const edgeGroups = {};
-for (const [proto, hex] of Object.entries(PROTO_COLORS)) {
-  const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array(256 * 6);
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setDrawRange(0, 0);
-  const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-    color: hex, transparent: true, opacity: 0.6,
-  }));
-  scene.add(lines);
-  edgeGroups[proto] = { geo, pos, lines, count: 0 };
-}
+let nodes = [], edgeData = [], selectedIp = null;
+let sortKey = 'total', sortDir = -1;
+const timeline = []; // rolling window of {ts, count}
 
 // --- Polling ---
-let lastEventTs = 0;
-
 async function pollTopology() {
   try {
-    const res = await fetch('/api/topology');
-    if (!res.ok) return;
-    const data = await res.json();
-    updateGraph(data);
+    const r = await fetch('/api/topology');
+    if (r.ok) { const d = await r.json(); nodes = d.nodes; edgeData = d.edges; render(); }
   } catch {}
   setTimeout(pollTopology, 1000);
 }
 
 async function pollStats() {
   try {
-    const res = await fetch('/api/stats');
-    if (!res.ok) return;
-    const s = await res.json();
-    document.getElementById('s-pkts').textContent = s.total_packets.toLocaleString();
-    document.getElementById('s-bytes').textContent = fmtBytes(s.total_bytes);
-    document.getElementById('s-hosts').textContent = s.host_count;
-    document.getElementById('s-edges').textContent = s.edge_count;
-    document.getElementById('s-pps').textContent = s.packets_per_second.toFixed(1);
-    document.getElementById('s-uptime').textContent = s.capture_duration.toFixed(0);
+    const r = await fetch('/api/stats');
+    if (r.ok) {
+      const s = await r.json();
+      document.getElementById('s-pkts').textContent = s.total_packets.toLocaleString();
+      document.getElementById('s-bytes').textContent = fmtB(s.total_bytes);
+      document.getElementById('s-hosts').textContent = s.host_count;
+      document.getElementById('s-edges').textContent = s.edge_count;
+      document.getElementById('s-pps').textContent = s.packets_per_second.toFixed(1);
+      document.getElementById('s-up').textContent = s.capture_duration.toFixed(0) + 's';
+      timeline.push({ ts: Date.now(), pkts: s.total_packets, pps: s.packets_per_second });
+      if (timeline.length > 60) timeline.shift();
+    }
   } catch {}
   setTimeout(pollStats, 1000);
 }
 
-function fmtBytes(b) {
+function fmtB(b) {
   if (b < 1024) return b + ' B';
   if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
   if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
   return (b/1073741824).toFixed(1) + ' GB';
 }
 
-function updateGraph(data) {
-  const incoming = new Set();
+// --- Render all panels ---
+function render() {
+  renderHosts();
+  renderMatrix();
+  renderProtocols();
+  renderTimeline();
+}
 
-  for (const n of data.nodes) {
-    incoming.add(n.ip);
-    if (nodes.has(n.ip)) {
-      nodes.get(n.ip).data = n;
-    } else {
-      const { mesh, label, radius } = createNodeMesh(n);
-      const x = (Math.random() - 0.5) * 100;
-      const y = (Math.random() - 0.5) * 100;
-      const z = (Math.random() - 0.5) * 100;
-      nodes.set(n.ip, { x, y, z, vx: 0, vy: 0, vz: 0, mesh, label, radius, data: n });
-    }
-  }
+// --- Top Talkers ---
+function renderHosts() {
+  const sorted = [...nodes].sort((a, b) => {
+    if (sortKey === 'ip') return sortDir * a.ip.localeCompare(b.ip);
+    if (sortKey === 'packets') return sortDir * (a.packet_count - b.packet_count);
+    return sortDir * ((a.bytes_sent + a.bytes_recv) - (b.bytes_sent + b.bytes_recv));
+  });
 
-  // Remove stale
-  for (const [ip, n] of nodes) {
-    if (!incoming.has(ip)) {
-      scene.remove(n.mesh);
-      scene.remove(n.label);
-      nodes.delete(ip);
-    }
-  }
+  const maxBytes = Math.max(1, ...sorted.map(n => n.bytes_sent + n.bytes_recv));
+  const tbody = document.getElementById('host-body');
+  tbody.innerHTML = '';
 
-  // Update edges
-  edges.length = 0;
-  for (const e of data.edges) {
-    if (nodes.has(e.source) && nodes.has(e.target)) {
-      edges.push({ srcIp: e.source, dstIp: e.target, edge: e });
-    }
+  for (const n of sorted) {
+    const total = n.bytes_sent + n.bytes_recv;
+    const pct = total / maxBytes * 100;
+    const cls = n.is_local ? 'local' : 'remote';
+    const sel = n.ip === selectedIp ? ' selected' : '';
+    const protos = (n.protocols || []).map(p => {
+      const c = PROTO_COLORS[p] || PROTO_COLORS.OTHER;
+      return `<span class="proto-tag" style="background:${c}22;color:${c}">${p}</span>`;
+    }).join('');
+
+    const tr = document.createElement('tr');
+    tr.className = sel.trim();
+    tr.innerHTML = `
+      <td><span class="ip ${cls}">${n.ip}</span><br><span style="font-size:10px;color:#475569">${n.subnet}</span></td>
+      <td class="bar-cell">
+        <div class="bar-fill" style="width:${pct}%;background:${n.is_local ? '#34d399' : '#64748b'}"></div>
+        <span class="bar-text">${fmtB(total)}</span>
+      </td>
+      <td>${n.packet_count.toLocaleString()}</td>
+      <td>${protos}</td>`;
+    tr.addEventListener('click', () => { selectedIp = (selectedIp === n.ip) ? null : n.ip; render(); });
+    tbody.appendChild(tr);
   }
 }
 
-// --- Simple force simulation ---
-function simTick() {
-  const repulsion = 200;
-  const linkDist = 50;
-  const linkStrength = 0.04;
-  const centering = 0.005;
-  const damping = 0.6;
-  const maxForce = 2.0;
+// Column sort
+document.querySelectorAll('#hosts th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (sortKey === key) sortDir *= -1;
+    else { sortKey = key; sortDir = -1; }
+    renderHosts();
+  });
+});
 
-  const nodeArr = [...nodes.values()];
+// --- Connection Matrix ---
+function renderMatrix() {
+  const canvas = document.getElementById('matrix-canvas');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = rect.width - 24;
+  const h = rect.height - 40;
+  canvas.width = w * devicePixelRatio;
+  canvas.height = h * devicePixelRatio;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
 
-  // Repulsion — softened with minimum distance
-  for (let i = 0; i < nodeArr.length; i++) {
-    for (let j = i + 1; j < nodeArr.length; j++) {
-      const a = nodeArr[i], b = nodeArr[j];
-      let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-      let dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      if (dist < 5) dist = 5; // prevent explosion at close range
-      const force = Math.min(maxForce, repulsion / (dist * dist));
-      const fx = dx / dist * force;
-      const fy = dy / dist * force;
-      const fz = dz / dist * force;
-      a.vx -= fx; a.vy -= fy; a.vz -= fz;
-      b.vx += fx; b.vy += fy; b.vz += fz;
+  const ips = nodes.map(n => n.ip).sort();
+  const n = ips.length;
+  if (n === 0) { ctx.fillStyle = '#475569'; ctx.font = '12px monospace'; ctx.fillText('waiting for data...', 20, 30); return; }
+
+  const ipIdx = {};
+  ips.forEach((ip, i) => ipIdx[ip] = i);
+
+  // Build matrix
+  const matrix = Array.from({length: n}, () => Array(n).fill(0));
+  const protoMatrix = Array.from({length: n}, () => Array(n).fill(''));
+  let maxVal = 1;
+  for (const e of edgeData) {
+    const si = ipIdx[e.source], ti = ipIdx[e.target];
+    if (si !== undefined && ti !== undefined) {
+      matrix[si][ti] += e.bytes;
+      matrix[ti][si] += e.bytes;
+      protoMatrix[si][ti] = e.protocol;
+      protoMatrix[ti][si] = e.protocol;
+      maxVal = Math.max(maxVal, matrix[si][ti]);
     }
   }
 
-  // Link attraction
-  for (const { srcIp, dstIp } of edges) {
-    const a = nodes.get(srcIp), b = nodes.get(dstIp);
-    if (!a || !b) continue;
-    let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-    let dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-    const force = (dist - linkDist) * linkStrength;
-    const fx = dx / dist * force;
-    const fy = dy / dist * force;
-    const fz = dz / dist * force;
-    a.vx += fx; a.vy += fy; a.vz += fz;
-    b.vx -= fx; b.vy -= fy; b.vz -= fz;
+  // Layout
+  const labelW = Math.min(100, w * 0.25);
+  const cellSize = Math.min(Math.floor((w - labelW) / n), Math.floor((h - labelW) / n), 40);
+  const gridW = cellSize * n;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Row labels (left)
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < n; i++) {
+    const node = nodes.find(nd => nd.ip === ips[i]);
+    ctx.fillStyle = node && node.is_local ? '#34d399' : '#64748b';
+    ctx.fillText(ips[i], labelW - 4, labelW + i * cellSize + cellSize / 2);
   }
 
-  // Centering + velocity update
-  for (const n of nodeArr) {
-    n.vx -= n.x * centering;
-    n.vy -= n.y * centering;
-    n.vz -= n.z * centering;
-    n.vx *= damping; n.vy *= damping; n.vz *= damping;
-    n.x += n.vx; n.y += n.vy; n.z += n.vz;
-
-    n.mesh.position.set(n.x, n.y, n.z);
-    n.label.position.set(n.x, n.y + n.radius + 5, n.z);
+  // Column labels (top, rotated)
+  ctx.save();
+  ctx.textAlign = 'left';
+  for (let j = 0; j < n; j++) {
+    const node = nodes.find(nd => nd.ip === ips[j]);
+    ctx.fillStyle = node && node.is_local ? '#34d399' : '#64748b';
+    ctx.save();
+    ctx.translate(labelW + j * cellSize + cellSize / 2, labelW - 4);
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillText(ips[j], 0, 0);
+    ctx.restore();
   }
+  ctx.restore();
 
-  // Update edge line buffers
-  for (const eg of Object.values(edgeGroups)) { eg.count = 0; }
+  // Cells
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const x = labelW + j * cellSize;
+      const y = labelW + i * cellSize;
+      const val = matrix[i][j];
 
-  for (const { srcIp, dstIp, edge } of edges) {
-    const a = nodes.get(srcIp), b = nodes.get(dstIp);
-    if (!a || !b) continue;
-    const proto = edge.protocol;
-    const eg = edgeGroups[proto] || edgeGroups.OTHER;
-    if (eg.count >= 256) continue;
-    const i = eg.count * 6;
-    eg.pos[i] = a.x; eg.pos[i+1] = a.y; eg.pos[i+2] = a.z;
-    eg.pos[i+3] = b.x; eg.pos[i+4] = b.y; eg.pos[i+5] = b.z;
-    eg.count++;
-  }
+      if (val > 0) {
+        const intensity = Math.log2(val + 1) / Math.log2(maxVal + 1);
+        const proto = protoMatrix[i][j];
+        const baseColor = PROTO_COLORS[proto] || PROTO_COLORS.OTHER;
+        ctx.fillStyle = hexAlpha(baseColor, 0.15 + intensity * 0.75);
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
 
-  for (const eg of Object.values(edgeGroups)) {
-    eg.geo.attributes.position.needsUpdate = true;
-    eg.geo.setDrawRange(0, eg.count * 2);
-  }
-}
+        if (cellSize > 20) {
+          ctx.fillStyle = '#c0ccdd';
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(fmtBShort(val), x + cellSize/2, y + cellSize/2);
+        }
+      } else {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+      }
 
-// --- Click / selection ---
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-
-canvas.addEventListener('click', (e) => {
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-
-  const meshes = [...nodes.values()].map(n => n.mesh);
-  const hits = raycaster.intersectObjects(meshes);
-
-  if (hits.length > 0) {
-    for (const [ip, n] of nodes) {
-      if (n.mesh === hits[0].object) {
-        showSelection(n.data);
-        return;
+      // Highlight selected
+      if (selectedIp && (ips[i] === selectedIp || ips[j] === selectedIp)) {
+        ctx.strokeStyle = '#7dd3fc44';
+        ctx.strokeRect(x, y, cellSize, cellSize);
       }
     }
   }
-  hideSelection();
-});
+}
 
-function showSelection(n) {
-  const el = document.getElementById('selection');
-  el.style.display = 'block';
-  document.getElementById('sel-ip').textContent = (n.is_local ? '(local) ' : '') + n.ip;
-  document.getElementById('sel-subnet').textContent = n.subnet;
-  document.getElementById('sel-sent').textContent = fmtBytes(n.bytes_sent);
-  document.getElementById('sel-recv').textContent = fmtBytes(n.bytes_recv);
-  document.getElementById('sel-pkts').textContent = n.packet_count.toLocaleString();
-  const protos = document.getElementById('sel-protos');
-  protos.innerHTML = '';
-  for (const p of n.protocols) {
-    const hex = (PROTO_COLORS[p] || PROTO_COLORS.OTHER).toString(16).padStart(6, '0');
-    protos.innerHTML += `<span class="tag" style="background:#${hex}33;color:#${hex}">${p}</span>`;
+function hexAlpha(hex, a) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${a.toFixed(2)})`;
+}
+
+function fmtBShort(b) {
+  if (b < 1024) return b + '';
+  if (b < 1048576) return (b/1024).toFixed(0) + 'K';
+  return (b/1048576).toFixed(0) + 'M';
+}
+
+// --- Protocol Breakdown ---
+function renderProtocols() {
+  const counts = {};
+  for (const e of edgeData) {
+    counts[e.protocol] = (counts[e.protocol] || 0) + e.bytes;
+  }
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const maxVal = Math.max(1, ...sorted.map(s => s[1]));
+  const container = document.getElementById('proto-bars');
+  container.innerHTML = '';
+
+  for (const [proto, bytes] of sorted) {
+    const pct = bytes / maxVal * 100;
+    const color = PROTO_COLORS[proto] || PROTO_COLORS.OTHER;
+    container.innerHTML += `
+      <div class="proto-row">
+        <div class="proto-label" style="color:${color}">${proto}</div>
+        <div class="proto-bar-bg">
+          <div class="proto-bar-fg" style="width:${pct}%;background:${color}"></div>
+          <span class="proto-bar-val">${fmtB(bytes)}</span>
+        </div>
+      </div>`;
   }
 }
 
-function hideSelection() {
-  document.getElementById('selection').style.display = 'none';
+// --- Activity Timeline ---
+function renderTimeline() {
+  const canvas = document.getElementById('timeline-canvas');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = rect.width - 24;
+  const h = rect.height - 40;
+  canvas.width = w * devicePixelRatio;
+  canvas.height = h * devicePixelRatio;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0, 0, w, h);
+
+  if (timeline.length < 2) {
+    ctx.fillStyle = '#475569'; ctx.font = '12px monospace';
+    ctx.fillText('collecting data...', 20, 30);
+    return;
+  }
+
+  const margin = { top: 10, right: 10, bottom: 20, left: 40 };
+  const pw = w - margin.left - margin.right;
+  const ph = h - margin.top - margin.bottom;
+
+  const maxPps = Math.max(1, ...timeline.map(t => t.pps));
+
+  // Grid lines
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = margin.top + ph * (1 - i / 4);
+    ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(w - margin.right, y); ctx.stroke();
+    ctx.fillStyle = '#475569'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText((maxPps * i / 4).toFixed(0), margin.left - 4, y + 3);
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#475569'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('pps', margin.left - 4, margin.top - 2);
+
+  // Line
+  ctx.beginPath();
+  ctx.strokeStyle = '#7dd3fc';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < timeline.length; i++) {
+    const x = margin.left + (i / (timeline.length - 1)) * pw;
+    const y = margin.top + ph * (1 - timeline[i].pps / maxPps);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Fill under line
+  ctx.lineTo(margin.left + pw, margin.top + ph);
+  ctx.lineTo(margin.left, margin.top + ph);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(125, 211, 252, 0.08)';
+  ctx.fill();
 }
 
-// --- Keyboard ---
-let paused = false;
-document.addEventListener('keydown', (e) => {
-  if (e.key === ' ') { paused = !paused; e.preventDefault(); }
-  if (e.key === 'r' || e.key === 'R') { camera.position.set(150, 120, 200); controls.target.set(0,0,0); }
+// --- Matrix click ---
+document.getElementById('matrix-canvas').addEventListener('click', (e) => {
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left);
+  const ips = nodes.map(n => n.ip).sort();
+  const n = ips.length;
+  if (n === 0) return;
+  const labelW = Math.min(100, rect.width * 0.25);
+  const cellSize = Math.min(Math.floor((rect.width - labelW) / n), 40);
+  const col = Math.floor((x - labelW) / cellSize);
+  if (col >= 0 && col < n) {
+    selectedIp = (selectedIp === ips[col]) ? null : ips[col];
+    render();
+  }
 });
 
-// --- Render loop ---
-function animate() {
-  requestAnimationFrame(animate);
-  if (!paused) simTick();
-  controls.update();
-  renderer.render(scene, camera);
-}
-
+// --- Start ---
 pollTopology();
 pollStats();
-animate();
+setInterval(renderTimeline, 1000);
 </script>
 </body>
 </html>
