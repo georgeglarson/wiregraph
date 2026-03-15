@@ -1,9 +1,9 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 
 export class Renderer {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  renderer: THREE.WebGLRenderer;
+  renderer: THREE.WebGPURenderer;
   raycaster: THREE.Raycaster;
   mouse: THREE.Vector2;
 
@@ -12,14 +12,14 @@ export class Renderer {
   private spherical = { radius: 300, phi: Math.PI / 3, theta: 0 };
   private target = new THREE.Vector3(0, 0, 0);
 
-  constructor(canvas: HTMLCanvasElement) {
+  private constructor(canvas: HTMLCanvasElement, renderer: THREE.WebGPURenderer) {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0a0a1a);
 
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
     this.updateCameraPosition();
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer = renderer;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(window.devicePixelRatio);
 
@@ -47,6 +47,12 @@ export class Renderer {
     this.setupResize();
   }
 
+  static async create(canvas: HTMLCanvasElement): Promise<Renderer> {
+    const gpuRenderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+    await gpuRenderer.init();
+    return new Renderer(canvas, gpuRenderer);
+  }
+
   private setupControls(canvas: HTMLCanvasElement): void {
     canvas.addEventListener("mousedown", (e) => {
       this.isDragging = true;
@@ -54,7 +60,6 @@ export class Renderer {
     });
 
     canvas.addEventListener("mousemove", (e) => {
-      // Update mouse for raycasting
       this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
       this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 

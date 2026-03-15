@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 // @ts-ignore — d3-force-3d has no types
 import { forceSimulation, forceLink, forceManyBody, forceCenter } from "d3-force-3d";
 import { Node, Edge, TopologyResponse, PROTOCOL_COLORS } from "./types";

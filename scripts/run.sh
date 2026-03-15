@@ -8,6 +8,11 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 [[ -d "$HOME/.mystral" ]] && export PATH="$PATH:$HOME/.mystral"
 
+# Mystral/SDL needs X11 (XWayland) on Wayland sessions
+if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+    export SDL_VIDEODRIVER=x11
+fi
+
 PORT="${PORT:-9877}"
 
 usage() {

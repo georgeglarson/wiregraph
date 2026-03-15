@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { PacketEvent, PROTOCOL_COLORS } from "./types";
 
 const MAX_ACTIVE = 100;
