@@ -20,12 +20,12 @@ echo "pcap: $PCAP_FILE"
 echo ""
 
 # Build backend
-echo "[1/2] building backend..."
+echo "building..."
 cd "$ROOT_DIR/backend"
 cargo build --release 2>&1 | tail -1
 BACKEND_BIN="$ROOT_DIR/backend/target/release/wiregraph-backend"
 
-echo "[2/2] launching..."
+echo "launching..."
 echo ""
 
 # Kill any stale process on the port

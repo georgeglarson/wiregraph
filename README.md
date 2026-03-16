@@ -1,38 +1,37 @@
 # wiregraph
 
-GPU-rendered network traffic visualizer. Hosts become nodes, traffic becomes flow, attacks become visual patterns.
+Real-time network traffic visualization. Hosts become nodes, traffic becomes flow, attacks become visual patterns.
 
-Built on [Mystral Native](https://github.com/nicholasgasior/mystral) (WebGPU JS runtime) + a Rust capture backend that reuses [netgrep](https://github.com/georgeglarson/netgrep) modules for packet parsing.
+Rust backend with an embedded web dashboard. Reuses [netgrep](https://github.com/georgeglarson/netgrep) modules for packet parsing.
 
 ```
-┌─────────────────────────────┐     HTTP polling      ┌──────────────────────────────┐
-│  Rust Backend (localhost)   │ ◄──────────────────── │  Mystral Native Frontend     │
-│                             │                        │                              │
-│  netgrep capture/parsing    │  GET /api/topology     │  Three.js + WebGPU           │
-│  → topology aggregation     │  GET /api/events       │  d3-force-3d layout          │
-│  → tiny_http JSON API       │  GET /api/stats        │  InstancedMesh rendering     │
-│                             │                        │  Canvas 2D HUD overlay       │
-└─────────────────────────────┘                        └──────────────────────────────┘
+┌─────────────────────────────┐     Browser
+│  Rust Backend (localhost)   │ ◄──────────────
+│                             │
+│  netgrep capture/parsing    │  GET /          → embedded dashboard (HTML/JS/CSS)
+│  → topology aggregation     │  GET /api/topology
+│  → connection matrix        │  GET /api/events
+│  → protocol breakdown       │  GET /api/stats
+│  → activity timeline        │
+│  → tiny_http JSON API       │
+└─────────────────────────────┘
 ```
 
 ## Features
 
-- **3D force-directed graph** — hosts as icosahedrons, connections as colored edges
+- **Top talkers** — ranked host list with traffic volume, packet count, protocol tags
+- **Connection matrix** — host-to-host traffic heatmap with color-coded intensity
+- **Protocol breakdown** — horizontal bar chart by bytes (TCP, HTTP, TLS, DNS, SSH, DHCP, etc.)
+- **Activity timeline** — stacked area chart showing traffic over time by protocol
 - **Live capture** — watch your network in real time (requires root/CAP_NET_RAW)
 - **Pcap replay** — load any .pcap/.pcapng file, no privileges needed
-- **Packet particles** — animated sprites flow along edges showing live traffic
-- **Protocol coloring** — HTTP=cyan, TLS=green, DNS=yellow, SSH=orange, UDP=purple
-- **Node sizing** — logarithmic scaling by traffic volume
-- **Subnet grouping** — local vs public IP visual distinction
-- **HUD overlay** — stats panel, selected node details, protocol legend
-- **Orbit controls** — drag to rotate, scroll to zoom, click to select
+- **BPF filtering** — standard Berkeley Packet Filter expressions
+- **Pcap export** — export captured traffic from the browser
 
 ## Prerequisites
 
-- Rust 1.91+ (for backend)
-- Node.js 20+ (for frontend build)
-- [Mystral Native](https://github.com/nicholasgasior/mystral) (for GPU rendering)
-- libpcap-dev / libpcap (for packet capture)
+- Rust 1.91+
+- libpcap-dev / libpcap
 
 ## Quick Start
 
@@ -51,22 +50,17 @@ sudo ./scripts/run.sh eth0
 ### Manual
 
 ```bash
-# Backend
 cd backend
 cargo build --release
 ./target/release/wiregraph-backend --file ../sample.pcap
-
-# Frontend (separate terminal)
-cd frontend
-npm install
-npm run build
-mystral run dist/wiregraph.js --width 1920 --height 1080 --title wiregraph
+# open http://localhost:9877
 ```
 
-## Backend API
+## API
 
 | Endpoint | Method | Returns |
 |----------|--------|---------|
+| `/` | GET | Embedded dashboard |
 | `/api/topology` | GET | `{ nodes: [...], edges: [...] }` |
 | `/api/events?since={ts}` | GET | `[...recent PacketEvents]` |
 | `/api/stats` | GET | `{ total_packets, hosts, pps, ... }` |
@@ -80,17 +74,6 @@ wiregraph-backend [OPTIONS]
   -p, --port <PORT>         HTTP port [default: 9877]
   --filter <BPF>            BPF filter expression
 ```
-
-## Controls
-
-| Key | Action |
-|-----|--------|
-| Drag | Rotate camera |
-| Scroll | Zoom |
-| Click | Select node |
-| Space | Pause/resume |
-| R | Reset camera |
-| F | Focus selected node |
 
 ## License
 
