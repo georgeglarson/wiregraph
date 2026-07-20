@@ -892,7 +892,7 @@ dependencies = [
 [[package]]
 name = "netgrep"
 version = "0.1.0"
-source = "git+https://github.com/georgeglarson/netgrep.git#0f939a43c0d478a81a472199e95926bee53ad42e"
+source = "git+https://github.com/georgeglarson/netgrep.git#0696ea2e84272b580317c9f16ea48d0da39fd24a"
 dependencies = [
  "anyhow",
  "base64",
