@@ -97,18 +97,17 @@ fn subnet_of(ip: IpAddr) -> String {
         }
         IpAddr::V6(v6) => {
             let segments = v6.segments();
-            format!("{:x}:{:x}:{:x}:{:x}::/64", segments[0], segments[1], segments[2], segments[3])
+            format!(
+                "{:x}:{:x}:{:x}:{:x}::/64",
+                segments[0], segments[1], segments[2], segments[3]
+            )
         }
     }
 }
 
 fn is_local_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-        }
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00 // ULA
@@ -117,25 +116,25 @@ fn is_local_ip(ip: IpAddr) -> bool {
     }
 }
 
-pub fn classify_protocol(t: Transport, src_port: Option<u16>, dst_port: Option<u16>) -> &'static str {
+pub fn classify_protocol(
+    t: Transport,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+) -> &'static str {
     match t {
-        Transport::Tcp => {
-            match dst_port.or(src_port) {
-                Some(80) | Some(8080) => "HTTP",
-                Some(443) => "TLS",
-                Some(22) => "SSH",
-                Some(25) | Some(587) | Some(465) => "SMTP",
-                _ => "TCP",
-            }
-        }
-        Transport::Udp => {
-            match dst_port.or(src_port) {
-                Some(53) | Some(5353) => "DNS",
-                Some(67) | Some(68) => "DHCP",
-                Some(123) => "NTP",
-                _ => "UDP",
-            }
-        }
+        Transport::Tcp => match dst_port.or(src_port) {
+            Some(80) | Some(8080) => "HTTP",
+            Some(443) => "TLS",
+            Some(22) => "SSH",
+            Some(25) | Some(587) | Some(465) => "SMTP",
+            _ => "TCP",
+        },
+        Transport::Udp => match dst_port.or(src_port) {
+            Some(53) | Some(5353) => "DNS",
+            Some(67) | Some(68) => "DHCP",
+            Some(123) => "NTP",
+            _ => "UDP",
+        },
         Transport::Icmp => "ICMP",
         Transport::Other => "OTHER",
     }
@@ -150,22 +149,34 @@ mod tests {
 
     #[test]
     fn subnet_of_ipv4_class_a() {
-        assert_eq!(subnet_of(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))), "10.1.2.0/24");
+        assert_eq!(
+            subnet_of(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))),
+            "10.1.2.0/24"
+        );
     }
 
     #[test]
     fn subnet_of_ipv4_class_c() {
-        assert_eq!(subnet_of(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))), "192.168.1.0/24");
+        assert_eq!(
+            subnet_of(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))),
+            "192.168.1.0/24"
+        );
     }
 
     #[test]
     fn subnet_of_ipv4_zeros() {
-        assert_eq!(subnet_of(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))), "0.0.0.0/24");
+        assert_eq!(
+            subnet_of(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+            "0.0.0.0/24"
+        );
     }
 
     #[test]
     fn subnet_of_ipv4_broadcast() {
-        assert_eq!(subnet_of(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))), "255.255.255.0/24");
+        assert_eq!(
+            subnet_of(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))),
+            "255.255.255.0/24"
+        );
     }
 
     #[test]
@@ -386,7 +397,10 @@ mod tests {
 
     #[test]
     fn classify_icmp_ignores_ports() {
-        assert_eq!(classify_protocol(Transport::Icmp, Some(80), Some(443)), "ICMP");
+        assert_eq!(
+            classify_protocol(Transport::Icmp, Some(80), Some(443)),
+            "ICMP"
+        );
     }
 
     #[test]
