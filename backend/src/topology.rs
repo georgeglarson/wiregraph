@@ -81,7 +81,6 @@ impl Topology {
             .or_insert_with(|| Edge::new(src_ip, dst_ip, dp, protocol));
         edge.bytes += bytes;
         edge.packets += 1;
-        edge.active = true;
         edge.last_seen = ts;
 
         // Append event

@@ -45,7 +45,6 @@ pub struct Edge {
     pub protocol: String,
     pub bytes: u64,
     pub packets: u64,
-    pub active: bool,
     pub last_seen: f64,
 }
 
@@ -58,7 +57,6 @@ impl Edge {
             protocol: protocol.to_string(),
             bytes: 0,
             packets: 0,
-            active: true,
             last_seen: 0.0,
         }
     }
@@ -293,7 +291,6 @@ mod tests {
         assert_eq!(edge.protocol, "HTTP");
         assert_eq!(edge.bytes, 0);
         assert_eq!(edge.packets, 0);
-        assert!(edge.active);
         assert_eq!(edge.last_seen, 0.0);
     }
 
@@ -475,7 +472,6 @@ mod tests {
         let json = serde_json::to_string(&edge).unwrap();
         assert!(json.contains("\"protocol\":\"DNS\""));
         assert!(json.contains("\"dst_port\":53"));
-        assert!(json.contains("\"active\":true"));
     }
 
     #[test]

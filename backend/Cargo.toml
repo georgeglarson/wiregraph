@@ -8,7 +8,7 @@ description = "Network traffic capture and topology aggregation backend for wire
 license = "MIT"
 
 [dependencies]
-netgrep = { git = "https://github.com/georgeglarson/netgrep.git" }
+netgrep = { git = "https://github.com/georgeglarson/netgrep.git", rev = "0696ea2e84272b580317c9f16ea48d0da39fd24a" }
 tiny_http = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
