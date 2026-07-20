@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use netgrep::capture::{PacketData, PacketSource};
-use netgrep::protocol::{parse_packet, LinkType};
+use netgrep::protocol::{LinkType, parse_packet};
 use pcap::Device;
 use serde::Serialize;
 
@@ -21,13 +21,14 @@ pub struct InterfaceInfo {
 
 pub fn list_interfaces() -> Result<Vec<InterfaceInfo>> {
     let devices = Device::list().context("Failed to list network interfaces")?;
-    Ok(devices.into_iter().map(|d| {
-        InterfaceInfo {
+    Ok(devices
+        .into_iter()
+        .map(|d| InterfaceInfo {
             name: d.name.clone(),
             description: d.desc.unwrap_or_default(),
             addresses: d.addresses.iter().map(|a| a.addr.to_string()).collect(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
 struct BufferedPacket {
@@ -48,14 +49,22 @@ fn ingest_packet(
     }
 
     // Parse and ingest into topology
-    if let Some(parsed) = parse_packet(raw, link_type) {
-        if let (Some(src_ip), Some(dst_ip)) = (parsed.src_ip, parsed.dst_ip) {
-            let protocol = classify_protocol(parsed.transport, parsed.src_port, parsed.dst_port);
-            let bytes = raw.len() as u64;
+    if let Some(parsed) = parse_packet(raw, link_type)
+        && let (Some(src_ip), Some(dst_ip)) = (parsed.src_ip, parsed.dst_ip)
+    {
+        let protocol = classify_protocol(parsed.transport, parsed.src_port, parsed.dst_port);
+        let bytes = raw.len() as u64;
 
-            if let Ok(mut topo) = topology.write() {
-                topo.ingest(src_ip, dst_ip, parsed.src_port, parsed.dst_port, protocol, bytes, None);
-            }
+        if let Ok(mut topo) = topology.write() {
+            topo.ingest(
+                src_ip,
+                dst_ip,
+                parsed.src_port,
+                parsed.dst_port,
+                protocol,
+                bytes,
+                None,
+            );
         }
     }
 }
@@ -90,7 +99,9 @@ pub fn run_capture_file(
 
     let first_ts = packets[0].timestamp;
     let last_ts = packets[packets.len() - 1].timestamp;
-    let capture_span = last_ts.duration_since(first_ts).unwrap_or(Duration::from_secs(1));
+    let capture_span = last_ts
+        .duration_since(first_ts)
+        .unwrap_or(Duration::from_secs(1));
     let replay_secs = 8.0f64;
     let speedup = if capture_span.as_secs_f64() > 0.001 {
         capture_span.as_secs_f64() / replay_secs
@@ -100,7 +111,9 @@ pub fn run_capture_file(
 
     eprintln!(
         "replaying {} packets over {:.0}s (original span: {:.2}s)",
-        packets.len(), replay_secs, capture_span.as_secs_f64()
+        packets.len(),
+        replay_secs,
+        capture_span.as_secs_f64()
     );
 
     loop {
@@ -114,7 +127,11 @@ pub fn run_capture_file(
         let replay_start = std::time::Instant::now();
 
         for pkt in &packets {
-            let offset = pkt.timestamp.duration_since(first_ts).unwrap_or_default().as_secs_f64();
+            let offset = pkt
+                .timestamp
+                .duration_since(first_ts)
+                .unwrap_or_default()
+                .as_secs_f64();
             let target_elapsed = offset / speedup;
             let actual_elapsed = replay_start.elapsed().as_secs_f64();
             if target_elapsed > actual_elapsed {
@@ -136,7 +153,7 @@ pub fn run_capture_live(
     store: Arc<RwLock<PacketStore>>,
 ) -> Result<()> {
     // The "any" pseudo-device doesn't support promiscuous mode
-    let promisc = interface.map_or(true, |name| name != "any");
+    let promisc = interface != Some("any");
     let mut source = PacketSource::live(interface, 65535, promisc, bpf, None)?;
     let link_type = source.link_type();
 
@@ -223,7 +240,8 @@ mod tests {
         run_once(&sample_pcap(), None, topo.clone(), store).unwrap();
 
         let t = topo.read().unwrap();
-        let protos: std::collections::HashSet<String> = t.edges.values().map(|e| e.protocol.clone()).collect();
+        let protos: std::collections::HashSet<String> =
+            t.edges.values().map(|e| e.protocol.clone()).collect();
         assert!(protos.contains("HTTP"));
         assert!(protos.contains("DNS"));
     }
@@ -264,7 +282,10 @@ mod tests {
         run_once(&sample_pcap(), None, topo, store.clone()).unwrap();
 
         let s = store.read().unwrap();
-        let filter = crate::packet_store::ExportFilter { hosts: vec![], protocols: vec![] };
+        let filter = crate::packet_store::ExportFilter {
+            hosts: vec![],
+            protocols: vec![],
+        };
         let pcap = s.export_pcap(&filter);
         // pcap global header is 24 bytes, should have more
         assert!(pcap.len() > 24);

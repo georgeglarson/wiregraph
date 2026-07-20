@@ -16,7 +16,10 @@ use packet_store::PacketStore;
 use topology::Topology;
 
 #[derive(Parser)]
-#[command(name = "wiregraph-backend", about = "Network traffic capture backend for wiregraph")]
+#[command(
+    name = "wiregraph-backend",
+    about = "Network traffic capture backend for wiregraph"
+)]
 struct Cli {
     /// Live capture interfaces (comma-separated, or omit for interactive selection)
     #[arg(short, long)]
@@ -74,7 +77,11 @@ fn main() -> Result<()> {
 
     // Resolve interfaces for live capture
     let interfaces: Vec<String> = if let Some(ref iface_arg) = cli.interface {
-        iface_arg.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        iface_arg
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     } else if cli.file.is_none() {
         // Interactive selection
         let ifaces = capture::list_interfaces()?;
@@ -98,23 +105,30 @@ fn main() -> Result<()> {
         eprint!("\nSelect interfaces (numbers or names, comma-separated): ");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
-        let selected: Vec<String> = input.trim().split(',').filter_map(|s| {
-            let s = s.trim();
-            if s.is_empty() { return None; }
-            // Try as number first
-            if let Ok(n) = s.parse::<usize>() {
-                if n >= 1 && n <= ifaces.len() {
+        let selected: Vec<String> = input
+            .trim()
+            .split(',')
+            .filter_map(|s| {
+                let s = s.trim();
+                if s.is_empty() {
+                    return None;
+                }
+                // Try as number first
+                if let Ok(n) = s.parse::<usize>()
+                    && n >= 1
+                    && n <= ifaces.len()
+                {
                     return Some(ifaces[n - 1].name.clone());
                 }
-            }
-            // Try as name
-            if ifaces.iter().any(|i| i.name == s) {
-                Some(s.to_string())
-            } else {
-                eprintln!("warning: '{}' not found, skipping", s);
-                None
-            }
-        }).collect();
+                // Try as name
+                if ifaces.iter().any(|i| i.name == s) {
+                    Some(s.to_string())
+                } else {
+                    eprintln!("warning: '{}' not found, skipping", s);
+                    None
+                }
+            })
+            .collect();
         if selected.is_empty() {
             anyhow::bail!("No valid interfaces selected");
         }
@@ -127,15 +141,24 @@ fn main() -> Result<()> {
         anyhow::bail!("Must specify --interface, --file, or select interactively");
     }
 
-    let max_bytes = parse_byte_size(&cli.max_bytes)
-        .ok_or_else(|| anyhow::anyhow!("Invalid --max-bytes value: '{}'. Use e.g. 500M, 1G, 2048K", cli.max_bytes))?;
-    eprintln!("retention: max {} packets, {} buffer",
-        cli.max_packets, format_bytes(max_bytes));
+    let max_bytes = parse_byte_size(&cli.max_bytes).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid --max-bytes value: '{}'. Use e.g. 500M, 1G, 2048K",
+            cli.max_bytes
+        )
+    })?;
+    eprintln!(
+        "retention: max {} packets, {} buffer",
+        cli.max_packets,
+        format_bytes(max_bytes)
+    );
 
     let topology = Arc::new(RwLock::new(Topology::new()));
-    let store = Arc::new(RwLock::new(
-        PacketStore::with_limits(netgrep::protocol::LinkType::Ethernet, cli.max_packets, max_bytes)
-    ));
+    let store = Arc::new(RwLock::new(PacketStore::with_limits(
+        netgrep::protocol::LinkType::Ethernet,
+        cli.max_packets,
+        max_bytes,
+    )));
 
     let capture_handles: Vec<_> = if let Some(path) = cli.file {
         let topo = topology.clone();
@@ -147,18 +170,23 @@ fn main() -> Result<()> {
             }
         })]
     } else {
-        interfaces.iter().map(|iface| {
-            let topo = topology.clone();
-            let st = store.clone();
-            let bpf = cli.filter.clone();
-            let iface = iface.clone();
-            thread::spawn(move || {
-                eprintln!("capturing on {}", iface);
-                if let Err(e) = capture::run_capture_live(Some(&iface), bpf.as_deref(), topo, st) {
-                    eprintln!("capture error on {}: {}", iface, e);
-                }
+        interfaces
+            .iter()
+            .map(|iface| {
+                let topo = topology.clone();
+                let st = store.clone();
+                let bpf = cli.filter.clone();
+                let iface = iface.clone();
+                thread::spawn(move || {
+                    eprintln!("capturing on {}", iface);
+                    if let Err(e) =
+                        capture::run_capture_live(Some(&iface), bpf.as_deref(), topo, st)
+                    {
+                        eprintln!("capture error on {}: {}", iface, e);
+                    }
+                })
             })
-        }).collect()
+            .collect()
     };
 
     // Store interface list for the API
@@ -174,18 +202,20 @@ fn main() -> Result<()> {
 
 fn parse_byte_size(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     let (num_part, multiplier) = match s.as_bytes().last()? {
-        b'K' | b'k' => (&s[..s.len()-1], 1024u64),
-        b'M' | b'm' => (&s[..s.len()-1], 1024 * 1024),
-        b'G' | b'g' => (&s[..s.len()-1], 1024 * 1024 * 1024),
+        b'K' | b'k' => (&s[..s.len() - 1], 1024u64),
+        b'M' | b'm' => (&s[..s.len() - 1], 1024 * 1024),
+        b'G' | b'g' => (&s[..s.len() - 1], 1024 * 1024 * 1024),
         b'B' | b'b' => {
             // Handle KB, MB, GB
             if s.len() >= 2 {
-                match s.as_bytes()[s.len()-2] {
-                    b'K' | b'k' => (&s[..s.len()-2], 1024u64),
-                    b'M' | b'm' => (&s[..s.len()-2], 1024 * 1024),
-                    b'G' | b'g' => (&s[..s.len()-2], 1024 * 1024 * 1024),
+                match s.as_bytes()[s.len() - 2] {
+                    b'K' | b'k' => (&s[..s.len() - 2], 1024u64),
+                    b'M' | b'm' => (&s[..s.len() - 2], 1024 * 1024),
+                    b'G' | b'g' => (&s[..s.len() - 2], 1024 * 1024 * 1024),
                     _ => (s, 1u64),
                 }
             } else {

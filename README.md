@@ -28,6 +28,19 @@ Rust backend with an embedded web dashboard. Reuses [netgrep](https://github.com
 - **BPF filtering** — standard Berkeley Packet Filter expressions
 - **Pcap export** — export captured traffic from the browser
 
+## Status & provenance
+
+Built early 2026 as an AI-assisted portfolio project: a working demo of a live traffic visualizer, not a supported product. The design shifted along the way (an early 3D force-graph gave way to this 2D analytics dashboard), and it never got a production shakedown.
+
+Where it stands after a July 2026 cleanup pass:
+
+- Builds clean and passes its 108-test suite on current stable Rust, with a clean `clippy -D warnings`, `fmt`, and CI on stable + 1.91.
+- Verified end to end: run it against a pcap and it serves the dashboard plus a JSON API (topology, stats, events) with real parsed data.
+- Reuses [netgrep](https://github.com/georgeglarson/netgrep) for packet parsing, pinned to a current commit.
+- Not actively maintained. Issues and PRs are welcome, no support promised.
+
+Read it as a reference implementation and a code sample, not something to drop into production.
+
 ## Prerequisites
 
 - Rust 1.91+

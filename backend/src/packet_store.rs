@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use netgrep::capture::pcap_writer::PcapWriter;
-use netgrep::protocol::{parse_packet, LinkType};
+use netgrep::protocol::{LinkType, parse_packet};
 use serde::Serialize;
 
 use crate::models::classify_protocol;
@@ -19,7 +19,10 @@ pub struct StoredPacket {
     pub protocol: String,
 }
 
+// Test-only defaults: production wires the limits from the CLI (see main.rs).
+#[cfg(test)]
 pub const DEFAULT_MAX_PACKETS: usize = 1_000_000;
+#[cfg(test)]
 pub const DEFAULT_MAX_BYTES: u64 = 500 * 1024 * 1024; // 500 MB
 
 pub struct PacketStore {
@@ -47,6 +50,8 @@ pub struct RetentionInfo {
 }
 
 impl PacketStore {
+    // Convenience constructor for tests; production uses with_limits (CLI args).
+    #[cfg(test)]
     pub fn new(link_type: LinkType) -> Self {
         Self::with_limits(link_type, DEFAULT_MAX_PACKETS, DEFAULT_MAX_BYTES)
     }
@@ -67,6 +72,8 @@ impl PacketStore {
         self.link_type = lt;
     }
 
+    // Convenience for tests; production uses add_with_link_type.
+    #[cfg(test)]
     pub fn add(&mut self, raw: &[u8], timestamp: SystemTime) {
         self.add_with_link_type(raw, timestamp, self.link_type);
     }
@@ -87,7 +94,8 @@ impl PacketStore {
             pkt.dst_ip = parsed.dst_ip;
             pkt.src_port = parsed.src_port;
             pkt.dst_port = parsed.dst_port;
-            pkt.protocol = classify_protocol(parsed.transport, parsed.src_port, parsed.dst_port).to_string();
+            pkt.protocol =
+                classify_protocol(parsed.transport, parsed.src_port, parsed.dst_port).to_string();
         }
 
         let pkt_size = pkt.raw.len() as u64;
@@ -120,20 +128,42 @@ impl PacketStore {
     }
 
     pub fn retention_info(&self) -> RetentionInfo {
-        let oldest = self.packets.first().map(|p| {
-            p.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
-        }).unwrap_or(0.0);
-        let newest = self.packets.last().map(|p| {
-            p.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
-        }).unwrap_or(0.0);
-        let window = if oldest > 0.0 && newest > oldest { newest - oldest } else { 0.0 };
+        let oldest = self
+            .packets
+            .first()
+            .map(|p| {
+                p.timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            })
+            .unwrap_or(0.0);
+        let newest = self
+            .packets
+            .last()
+            .map(|p| {
+                p.timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            })
+            .unwrap_or(0.0);
+        let window = if oldest > 0.0 && newest > oldest {
+            newest - oldest
+        } else {
+            0.0
+        };
 
         let bytes_util = if self.max_bytes > 0 {
             self.current_bytes as f64 / self.max_bytes as f64 * 100.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         let pkt_util = if self.max_packets > 0 {
             self.packets.len() as f64 / self.max_packets as f64 * 100.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         RetentionInfo {
             stored_packets: self.packets.len(),
@@ -151,8 +181,8 @@ impl PacketStore {
 
     pub fn export_pcap(&self, filter: &ExportFilter) -> Vec<u8> {
         let mut buf = Vec::new();
-        let mut writer = PcapWriter::new(&mut buf, self.link_type.pcap_link_type())
-            .expect("pcap writer");
+        let mut writer =
+            PcapWriter::new(&mut buf, self.link_type.pcap_link_type()).expect("pcap writer");
 
         for pkt in &self.packets {
             if !filter.matches(pkt) {
@@ -165,6 +195,7 @@ impl PacketStore {
         buf
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.packets.len()
     }
@@ -175,17 +206,20 @@ impl PacketStore {
             protocols: query.protocols.clone(),
         };
 
-        let matching: Vec<&StoredPacket> = self.packets.iter()
+        let matching: Vec<&StoredPacket> = self
+            .packets
+            .iter()
             .filter(|pkt| filter.matches(pkt))
             .filter(|pkt| {
-                query.port.map_or(true, |port| {
-                    pkt.src_port == Some(port) || pkt.dst_port == Some(port)
-                })
+                query
+                    .port
+                    .is_none_or(|port| pkt.src_port == Some(port) || pkt.dst_port == Some(port))
             })
             .collect();
 
         let total = matching.len();
-        let packets: Vec<PacketInfo> = matching.into_iter()
+        let packets: Vec<PacketInfo> = matching
+            .into_iter()
             .skip(query.offset)
             .take(query.limit)
             .map(|pkt| {
@@ -228,8 +262,14 @@ impl PacketStore {
         let mut last: Option<f64> = None;
 
         for pkt in &self.packets {
-            let src = match pkt.src_ip { Some(ip) => ip, None => continue };
-            let dst = match pkt.dst_ip { Some(ip) => ip, None => continue };
+            let src = match pkt.src_ip {
+                Some(ip) => ip,
+                None => continue,
+            };
+            let dst = match pkt.dst_ip {
+                Some(ip) => ip,
+                None => continue,
+            };
 
             let is_a_to_b = src == a && dst == b;
             let is_b_to_a = src == b && dst == a;
@@ -238,7 +278,11 @@ impl PacketStore {
                 continue;
             }
 
-            let ts = pkt.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+            let ts = pkt
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64();
             first = Some(first.map_or(ts, |f: f64| f.min(ts)));
             last = Some(last.map_or(ts, |l: f64| l.max(ts)));
 
@@ -273,13 +317,16 @@ impl ExportFilter {
     pub fn matches(&self, pkt: &StoredPacket) -> bool {
         // Empty filter = match all
         let host_match = self.hosts.is_empty() || {
-            let src_ok = pkt.src_ip.map_or(false, |ip| self.hosts.contains(&ip));
-            let dst_ok = pkt.dst_ip.map_or(false, |ip| self.hosts.contains(&ip));
+            let src_ok = pkt.src_ip.is_some_and(|ip| self.hosts.contains(&ip));
+            let dst_ok = pkt.dst_ip.is_some_and(|ip| self.hosts.contains(&ip));
             src_ok || dst_ok
         };
 
         let proto_match = self.protocols.is_empty()
-            || self.protocols.iter().any(|p| p.eq_ignore_ascii_case(&pkt.protocol));
+            || self
+                .protocols
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(&pkt.protocol));
 
         host_match && proto_match
     }
@@ -349,7 +396,13 @@ mod tests {
         make_pkt_ports(src, dst, proto, 12345, 80)
     }
 
-    fn make_pkt_ports(src: [u8; 4], dst: [u8; 4], proto: &str, sport: u16, dport: u16) -> StoredPacket {
+    fn make_pkt_ports(
+        src: [u8; 4],
+        dst: [u8; 4],
+        proto: &str,
+        sport: u16,
+        dport: u16,
+    ) -> StoredPacket {
         StoredPacket {
             raw: vec![0; 64],
             timestamp: SystemTime::now(),
@@ -363,8 +416,11 @@ mod tests {
 
     #[test]
     fn empty_filter_matches_all() {
-        let f = ExportFilter { hosts: vec![], protocols: vec![] };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        let f = ExportFilter {
+            hosts: vec![],
+            protocols: vec![],
+        };
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
@@ -373,7 +429,7 @@ mod tests {
             hosts: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))],
             protocols: vec![],
         };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
@@ -382,7 +438,7 @@ mod tests {
             hosts: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
             protocols: vec![],
         };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
@@ -391,25 +447,34 @@ mod tests {
             hosts: vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))],
             protocols: vec![],
         };
-        assert!(!f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        assert!(!f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
     fn protocol_filter_matches() {
-        let f = ExportFilter { hosts: vec![], protocols: vec!["HTTP".to_string()] };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        let f = ExportFilter {
+            hosts: vec![],
+            protocols: vec!["HTTP".to_string()],
+        };
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
     fn protocol_filter_no_match() {
-        let f = ExportFilter { hosts: vec![], protocols: vec!["DNS".to_string()] };
-        assert!(!f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        let f = ExportFilter {
+            hosts: vec![],
+            protocols: vec!["DNS".to_string()],
+        };
+        assert!(!f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
     fn protocol_filter_case_insensitive() {
-        let f = ExportFilter { hosts: vec![], protocols: vec!["http".to_string()] };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        let f = ExportFilter {
+            hosts: vec![],
+            protocols: vec!["http".to_string()],
+        };
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
     }
 
     #[test]
@@ -419,9 +484,9 @@ mod tests {
             protocols: vec!["DNS".to_string()],
         };
         // Host matches but protocol doesn't
-        assert!(!f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
+        assert!(!f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
         // Both match
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "DNS")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "DNS")));
     }
 
     #[test]
@@ -433,9 +498,9 @@ mod tests {
             ],
             protocols: vec![],
         };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
-        assert!(f.matches(&make_pkt([1,2,3,4], [8,8,8,8], "DNS")));
-        assert!(!f.matches(&make_pkt([1,2,3,4], [5,6,7,8], "TCP")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
+        assert!(f.matches(&make_pkt([1, 2, 3, 4], [8, 8, 8, 8], "DNS")));
+        assert!(!f.matches(&make_pkt([1, 2, 3, 4], [5, 6, 7, 8], "TCP")));
     }
 
     #[test]
@@ -444,20 +509,50 @@ mod tests {
             hosts: vec![],
             protocols: vec!["HTTP".to_string(), "TLS".to_string()],
         };
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "HTTP")));
-        assert!(f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "TLS")));
-        assert!(!f.matches(&make_pkt([10,0,0,1], [10,0,0,2], "DNS")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "HTTP")));
+        assert!(f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "TLS")));
+        assert!(!f.matches(&make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "DNS")));
     }
 
     // --- query_packets tests ---
 
     fn make_store_with_packets() -> PacketStore {
         let mut store = PacketStore::new(LinkType::Ethernet);
-        store.packets.push(make_pkt_ports([10,0,0,1], [10,0,0,2], "HTTP", 54321, 80));
-        store.packets.push(make_pkt_ports([10,0,0,1], [8,8,8,8], "DNS", 54322, 53));
-        store.packets.push(make_pkt_ports([10,0,0,2], [10,0,0,1], "TLS", 54323, 443));
-        store.packets.push(make_pkt_ports([10,0,0,1], [10,0,0,2], "HTTP", 54324, 80));
-        store.packets.push(make_pkt_ports([8,8,8,8], [10,0,0,1], "DNS", 53, 54322));
+        store.packets.push(make_pkt_ports(
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            "HTTP",
+            54321,
+            80,
+        ));
+        store.packets.push(make_pkt_ports(
+            [10, 0, 0, 1],
+            [8, 8, 8, 8],
+            "DNS",
+            54322,
+            53,
+        ));
+        store.packets.push(make_pkt_ports(
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            "TLS",
+            54323,
+            443,
+        ));
+        store.packets.push(make_pkt_ports(
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            "HTTP",
+            54324,
+            80,
+        ));
+        store.packets.push(make_pkt_ports(
+            [8, 8, 8, 8],
+            [10, 0, 0, 1],
+            "DNS",
+            53,
+            54322,
+        ));
         store
     }
 
@@ -563,7 +658,13 @@ mod tests {
     fn eviction_by_packet_count() {
         let mut store = PacketStore::with_limits(LinkType::Ethernet, 3, u64::MAX);
         for i in 0..5u8 {
-            store.packets.push(make_pkt_ports([10,0,0,i], [10,0,0,2], "TCP", 1000 + i as u16, 80));
+            store.packets.push(make_pkt_ports(
+                [10, 0, 0, i],
+                [10, 0, 0, 2],
+                "TCP",
+                1000 + i as u16,
+                80,
+            ));
             store.current_bytes += 64;
         }
         store.evict();
@@ -578,7 +679,9 @@ mod tests {
         // 64 bytes per packet, limit to 192 bytes = 3 packets
         let mut store = PacketStore::with_limits(LinkType::Ethernet, usize::MAX, 192);
         for _ in 0..5 {
-            store.packets.push(make_pkt([10,0,0,1], [10,0,0,2], "TCP"));
+            store
+                .packets
+                .push(make_pkt([10, 0, 0, 1], [10, 0, 0, 2], "TCP"));
             store.current_bytes += 64;
         }
         store.evict();

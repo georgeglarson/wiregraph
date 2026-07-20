@@ -15,8 +15,8 @@ pub fn run_server(
     interfaces: Vec<InterfaceInfo>,
 ) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
-    let server = Server::http(&addr)
-        .map_err(|e| anyhow::anyhow!("Failed to bind {}: {}", addr, e))?;
+    let server =
+        Server::http(&addr).map_err(|e| anyhow::anyhow!("Failed to bind {}: {}", addr, e))?;
 
     eprintln!("wiregraph backend listening on http://{}", addr);
 
@@ -29,8 +29,10 @@ pub fn run_server(
 
         // Serve web UI
         if path_base == "/" || path_base == "/index.html" {
-            let html_header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
-            let _ = request.respond(Response::from_string(web_ui::INDEX_HTML).with_header(html_header));
+            let html_header =
+                Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
+            let _ =
+                request.respond(Response::from_string(web_ui::INDEX_HTML).with_header(html_header));
             continue;
         }
 
@@ -40,11 +42,14 @@ pub fn run_server(
             let s = store.read().unwrap();
             let pcap_data = s.export_pcap(&filter);
 
-            let pcap_header = Header::from_bytes(&b"Content-Type"[..], &b"application/vnd.tcpdump.pcap"[..]).unwrap();
+            let pcap_header =
+                Header::from_bytes(&b"Content-Type"[..], &b"application/vnd.tcpdump.pcap"[..])
+                    .unwrap();
             let disp_header = Header::from_bytes(
                 &b"Content-Disposition"[..],
                 &b"attachment; filename=\"wiregraph-export.pcap\""[..],
-            ).unwrap();
+            )
+            .unwrap();
             let _ = request.respond(
                 Response::from_data(pcap_data)
                     .with_header(pcap_header)
@@ -62,16 +67,17 @@ pub fn run_server(
             }
             "/api/events" => {
                 let topo = topology.read().unwrap();
-                let since = params.get("since").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+                let since = params
+                    .get("since")
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.0);
                 serde_json::to_string(&topo.events_since(since)).ok()
             }
             "/api/stats" => {
                 let topo = topology.read().unwrap();
                 serde_json::to_string(&topo.stats()).ok()
             }
-            "/api/interfaces" => {
-                serde_json::to_string(&interfaces).ok()
-            }
+            "/api/interfaces" => serde_json::to_string(&interfaces).ok(),
             "/api/retention" => {
                 let s = store.read().unwrap();
                 serde_json::to_string(&s.retention_info()).ok()
@@ -89,7 +95,9 @@ pub fn run_server(
                         let s = store.read().unwrap();
                         serde_json::to_string(&s.conversation(a, b)).ok()
                     }
-                    _ => Some(r#"{"error":"missing or invalid 'a' and 'b' IP parameters"}"#.to_string()),
+                    _ => Some(
+                        r#"{"error":"missing or invalid 'a' and 'b' IP parameters"}"#.to_string(),
+                    ),
                 }
             }
             _ => None,
@@ -128,37 +136,45 @@ fn parse_path(url: &str) -> (std::collections::HashMap<String, String>, String) 
 }
 
 fn build_packet_query(params: &std::collections::HashMap<String, String>) -> PacketQuery {
-    let hosts = params.get("hosts").map(|h| {
-        h.split(',')
-            .filter_map(|ip| ip.parse().ok())
-            .collect()
-    }).unwrap_or_default();
+    let hosts = params
+        .get("hosts")
+        .map(|h| h.split(',').filter_map(|ip| ip.parse().ok()).collect())
+        .unwrap_or_default();
 
-    let protocols = params.get("protocols").map(|p| {
-        p.split(',')
-            .map(|s| s.to_string())
-            .collect()
-    }).unwrap_or_default();
+    let protocols = params
+        .get("protocols")
+        .map(|p| p.split(',').map(|s| s.to_string()).collect())
+        .unwrap_or_default();
 
     let port = params.get("port").and_then(|v| v.parse().ok());
-    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(100);
-    let offset = params.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let offset = params
+        .get("offset")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
-    PacketQuery { hosts, protocols, port, limit, offset }
+    PacketQuery {
+        hosts,
+        protocols,
+        port,
+        limit,
+        offset,
+    }
 }
 
 fn build_export_filter(params: &std::collections::HashMap<String, String>) -> ExportFilter {
-    let hosts = params.get("hosts").map(|h| {
-        h.split(',')
-            .filter_map(|ip| ip.parse().ok())
-            .collect()
-    }).unwrap_or_default();
+    let hosts = params
+        .get("hosts")
+        .map(|h| h.split(',').filter_map(|ip| ip.parse().ok()).collect())
+        .unwrap_or_default();
 
-    let protocols = params.get("protocols").map(|p| {
-        p.split(',')
-            .map(|s| s.to_string())
-            .collect()
-    }).unwrap_or_default();
+    let protocols = params
+        .get("protocols")
+        .map(|p| p.split(',').map(|s| s.to_string()).collect())
+        .unwrap_or_default();
 
     ExportFilter { hosts, protocols }
 }
